@@ -1,0 +1,38 @@
+# Build outputs and machine-local IDE/SDK settings
+.gradle/
+.kotlin/
+**/build/
+.idea/
+*.iml
+local.properties
+.externalNativeBuild/
+.cxx/
+captures/
+diagnostics/
+.local/
+*.log
+*.hprof
+*.apk
+*.aab
+*.apks
+
+# Credentials and signing material (keep templates, never real secrets)
+.env
+.env.*
+!.env.example
+!.env.sample
+secrets/
+*.jks
+*.keystore
+*.p12
+*.pfx
+keystore.properties
+signing.properties
+
+# OS/editor temporary files
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Gradle Wrapper scripts/JAR/properties are intentionally NOT ignored.
