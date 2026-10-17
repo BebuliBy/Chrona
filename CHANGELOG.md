@@ -82,3 +82,12 @@
 - Расширены ignore-правила для сборок/дампов/локальной диагностики. Добавлен **неутверждённый** план локальной Chrona и процесса выбора UI; полноценная локальная реализация не начата.
 - После смены Gradle project name offline debug build успешен; unit-тесты отдельно повторно выполнены с `--rerun-tasks` (8/8). SDK XML-version warning остаётся, lint/новых телефонных тестов на этом Git-этапе не выполняли, диагностический APK на телефон не переустанавливали.
 - Для переносимого первого Git-снимка добавлен `.gitattributes`: Linux wrapper LF, Windows `.bat` CRLF при checkout/нормализованный текст в index, JAR binary. Первоначальный whitespace-check отметил CRLF сгенерированного `gradlew.bat`; исправлена политика строк проекта, глобальный Git config и vendor-логика не менялись.
+
+## 2026-10-18 — вариантБ и первое UI-превью
+
+- Пользователь выбралБ: ручные привычки/отметки/цели/серии включены в локальный scope, зафиксированы HABIT-001/002 и DEC-010. Детальные бизнес-правила и окончательный дизайн ещё не приняты.
+- Добавлен модуль `chrona` с Compose/Material3, DemoViewModel/StateFlow/reducer и центральной темой:4раздела, детали, пробные create/delete/goal/progress, история/empty/reset,2палитры и system/light/dark. Везде demo banner; реальная история/БД/collector не подключены.
+- Старый `app` spike сохранён отдельно. Новый debug APK `by.bebuliby.chrona.debug`, label «Chrona — дизайн», без INTERNET/Accessibility/storage/mic permissions; релизный ключ/подпись не создавались.
+- Build app/test APK и20unit tests успешны. APK установлен/запрос запускаStatusok, но телефонDozing;3UI instrumentation tests только скомпилированы, визуал/скриншоты не подтверждены. Ожидается добровольное открытие пользователем, lock не обходится.
+- [Подробный UI-отчёт](docs/ui-checkpoint-2026-10-18.md). Полная локальная Chrona не объявлена готовой; следующий шаг — пользовательская визуальная проверка, затем реальные данные.
+- Lint завершён с0errors/8warnings(7dependency updates,1v26 qualifier). Явно закрыты cloud/device extraction для UI-чекпоинта, добавлен monochrome icon и синхронизация системных bar icons с темой. Неудачное перемещение icon вернули в рабочийv26 path и проверили полным rerun; warning не скрывали. Финальная debug-сборка повторно установлена поверх своей identity без удаления; production-data migration этим не проверена.

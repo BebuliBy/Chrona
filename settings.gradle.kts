@@ -7,3 +7,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "Chrona"
 include(":app")
+include(":chrona")
