@@ -1,9 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- UI checkpoint: no Internet, AccessibilityService or access to real user history. -->
+    <!-- Network is reserved for explicitly linked/allowlisted profile images and future API wiring.
+         No broad storage or microphone permission. Accessibility is enabled only by the user. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
-        android:label="Chrona — дизайн"
+        android:name=".data.ChronaApplication"
+        android:label="Chrona"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
+        android:usesCleartextTraffic="false"
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:supportsRtl="true"
@@ -14,5 +18,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service
+            android:name=".tracking.ShortsAccessibilityService"
+            android:label="@string/tracking_service_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/shorts_accessibility_service" />
+        </service>
     </application>
 </manifest>

@@ -1,0 +1,14 @@
+# Dockerfile-specific allowlist; do NOT send Android, .git, build outputs or secrets.
+**
+!gradlew
+!gradle/
+!gradle/wrapper/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+!backend/
+!backend/settings.gradle.kts
+!backend/build.gradle.kts
+!backend/gradle.properties
+!backend/src/
+!backend/src/main/
+!backend/src/main/**

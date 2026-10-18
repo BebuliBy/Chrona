@@ -129,3 +129,17 @@
 - Root archi может назначать несколько независимых sibling developer-сессий UI/core/backend. Сам developer не вызывает себя/предков; sysadmin отвечает за infra/deploy, не заменяет Android/backend coder. Отсутствие task мешает делегации, не прямой разработке.
 - Task и High проверяются раздельно. Исходник установленного backend показал: родительский High не наследуется профилем с явно заданной моделью, task не имеет variant override. Временное переключение существующих ролей — возможный отдельный технический шаг после проверки, не причина заводить новые роли. Сейчас не применено.
 - В реально работающем хранилище metadata проблемного coordinator tools.task отсутствует, task/session deny нет; его variant оказался xhigh. Две гипотезы блокировки опровергнуты, но реальная выдача tools модели ещё не установлена. Повторять слепой restart/allow-патч запрещено; диагностика ограничена metadata без переписки/секретов. Продуктовые субагенты ещё не запущены.
+
+## DEC-019 — явное исполнение исходного плана обычными субагентами
+
+- 2026-10-18 пользователь повторил UI/server scope и потребовал выполнить его, распараллеливая без вреда. Последующие ответы о7эмоциях/+140/Shorts read-only/нулевом лимите сохраняют приоритет над исходной цитатой6/170.
+- Реальные sibling developer UI/core/backend и sysadmin/desktop/browser поручения выполнены. Общий контракт передан до кода, ownership/worktrees разделены, root единственный Git-интегратор. Никаких новых профилей или модельных shell/HTTP launch.
+- Пользователь потребовал временно изменить High **без повторной проверки настройки**. Только4 existing specialist variants изменены medium→high→medium; default/provider/permissions не менялись. Model metadata независимо не проверялись и не объявляются проверенными.
+- Backend реализован Kotlin/Ktor/JDBC/PostgreSQL; Android Room2/DataStore/Keystore/HTTPS, schema1→2 с недеструктивной migration. Это конкретная реализация согласованного modular-monolith/local-first направления, не смена продуктовых требований.
+
+## DEC-020 — серверный deploy разрешён отдельно
+
+- Пользователь явно разрешил серверные действия/sudo в задаче Chrona. Credentials использованы только в private stdin, в source/docs/Git/память значения не сохранены.
+- Свои Docker proxy/DB/API, минимальный private VPN outbound transfer, backups, controlled own restart/reconnect и isolated restore выполнены; HTTPS `/chrona` добавлен без reset старых Serve/Nextcloud mappings. Никаких global VPN, публичного SOCKS/Funnel, updates/reboot или чужих остановок.
+- Нового Telegram-бота создаёт владелец через BotFather. До token worker выключен и API login503; не использовать старой неизвестный token/фиктивный username. Результаты и остатки — в integration/server deployment.
+- Discoverability остаётся default off с явным app/bot setter; sharing — только подтверждённый абсолютный набор своих habits и explicit temporal scope, без auto-upload/default fan-out.

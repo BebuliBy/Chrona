@@ -1,6 +1,6 @@
 # Chrona: архитектура и границы решений
 
-Статус на 2026-10-18: выбран локальный вариантБ, начат UI-чекпоинт. `app` — прежняя Accessibility-диагностика; `chrona` — Compose UI с чистым in-memory DemoReducer/DemoViewModel и Theme, без реальной БД/collector. [UI-результаты](ui-checkpoint-2026-10-18.md), [spike](spike-results-2026-10-17.md). Серверная архитектура ниже не реализована.
+Статус на 2026-10-18: UI-v2, Room2/DataStore/collector, Android HTTPS/PKCE/sync/social client и Kotlin/Ktor/JDBC backend объединены. Серверные Xray/Postgres/API/private HTTPS реально работают; bot/token/phone E2E ещё нет. Fixtures только preview, старый `app` сохранён. [Текущая интеграция](integration-2026-10-18.md), [контракт](data-api-contract.md), [runtime](server-deployment-2026-10-18.md). Предложения ниже не отменяют явные оставшиеся продуктовые вопросы.
 
 ## Целевая схема
 
@@ -52,7 +52,7 @@ UsageStats не даёт готовой метрики Shorts. Фоновая р
 
 - Kotlin/Compose/Material3 + ViewModel/StateFlow используются в первом UI-этапе описанного плана; Room/DataStore — следующий storage-этап, пока не подключены. ВариантБ подтвердил manual habits/goals/streaks, не любую новую бизнес-семантику или финальный дизайн.
 - Один Android app с ясными пакетами/слоями `ui`, `domain`, `data`, `tracking`; отдельные Gradle-модули вводить при реальной необходимости, не ради количества слоёв. UI не зависит от resource IDs YouTube напрямую.
-- Локальный профиль без Telegram/регистрации в этом этапе; будущая привязка Telegram/sync через отдельные границы, без подмены утверждённого будущего bot flow. Интервалы получают стабильные ID; сеть/бот пока не реализуются.
+- Локальный профиль работает без Telegram. Client уже реализует отдельно настраиваемый HTTPS/PKCE/session binding/sync; token/verifier — Keystore vault, не Room. Интервалы стабильные ID, случайный server Shorts UUID отображается на local system UUID без manual provisioning. Реальная привязка ждёт нового бота/телефонной приёмки.
 - Длительности по monotonic time, timestamp UTC, явные gaps/качество, восстановление после потери процесса без дорисовки просмотра. Разбиение суток/timezone и точность принять до реализации.
 - Event-driven collector плюс обоснованный safety heartbeat вместо безусловного переноса каждосекундной записи spike в production. Это направление оптимизации, не обещанный результат экономии батареи.
 - Применять SHORTS-003/004; отдельные состояния «точно не Shorts», «наблюдение недоступно» и «отключено пользователем» не скрывать одним ложным нулём.
@@ -63,12 +63,12 @@ UsageStats не даёт готовой метрики Shorts. Фоновая р
 - Отдельный `chrona` module сохраняет воспроизводимость старого `app` без массового переноса. Debug APK `by.bebuliby.chrona.debug`, target/compile36/min26; релизный base ID `by.bebuliby.chrona` пока зарезервирован технически, до настоящих данных подтвердить final identity/подпись. Release key не создавался.
 - Compose compiler2.2.10 соответствует встроенному Kotlin2.2.10/AGP9.1.1. Для консервативной совместимости выбран официальный Google BOM2025.08.01 (UI/runtime/foundation1.9.0,Material3 1.3.2), ActivityCompose1.11.0, LifecycleCompose2.9.2. Gradle успешно разрешил/собрал эту связку с JBR25; более новый BOM2026.09.00 не используется.
 - `preview/DemoState` и DemoReducer — **fixtures/контролы UI**, не production-domain серий/периодичности. Значения обновляются только в памяти VM. Шаблон дневной цели, числа серии и поле лимитов ввода — примеры для дизайна, не утверждённый алгоритм привычек.
-- `ui/ChronaTheme` централизует draft tokens; две палитры/темы нужны для выбора пользователем. Тема хранится только в VM, не DataStore. `@Preview` компилируются, факт их показа IDE ещё не проверен.
-- Основной APK не имеет INTERNET/Accessibility/storage/microphone permissions; AndroidX добавил только собственную signature-scoped dynamic receiver permission. Нет фонового сбора, серверов или импорта старых диагностических интервалов.
+- `ui/ChronaTheme` централизует 12 палитр/3 стиля, IDs сохраняются DataStore. Preview компилируются; visual/real phone acceptance отдельно.
+- APK имеет INTERNET/cleartext=false и user-enabled AccessibilityService, без microphone/broad storage. Tracker пишет только минимальные structural observations/intervals/gaps; fixtures и старые diagnostic intervals не импортируются.
 
 ## UI и локальное ядро — независимые рабочие направления
 
-По запросу пользователя отделить локальные storage/tracking от меняющегося дизайна. Это **план/предлагаемый контракт, не готовая БД и не запущенный второй агент**. Серверный backend/deploy всё ещё вне текущего локального этапа.
+Разделение выполнено обычными developer-субагентами с разными ownership/worktrees. Общий data/UI/API contract передан до кода; root объединил UI/core/client/backend/infra и собрал main/test APK. Compose renderer не зависит от DAO/YouTube IDs; VM/repositories/collector и transport разделены. Сервер разрешён пользователем отдельным последующим сообщением и развёрнут sysadmin.
 
 Предлагаемая граница:
 
@@ -90,9 +90,9 @@ Compose UI → use cases / observed state → repository interfaces → Room
 
 Room должна иметь schema version/тестируемые миграции, без молчаливого destructive fallback. Переход из демоданных — явный; fixtures не импортируются в настоящий учёт. Release signing/identity, финальные правила дней/частот и схема ещё требуют принятия до реальной пользовательской истории. Техническая готовность к future sync не означает сетевые запросы в локальной версии.
 
-Фактическое ядро можно развивать, не ожидая выбора палитры: хранить raw facts и отдельно подключать согласованные вычисления. В этом шаге источники/DAO/БД/collector не добавлены и фоновой работы нет. Параллельное агентное поручение фактически не отправлено.
+Ядро хранит raw facts, расчёты подключены отдельно. Room schema1→2 имеет явную migration без destructive fallback; frozen operations/ACK revisions/pull cursor атомарны, конфликт не удаляет local facts. Background sync — пока process-alive best effort после явного согласия, не обход Android force-stop и не обещание бессмертного сервиса.
 
-**Текущий статус:** пользователь возобновил запрос реализации и server prep (DEC-015/016), zero-limit success уточнён как 100%. Добавленная схема 7 новых профилей отменена и удалена по его прямому требованию (DEC-018). Исходный план субагентов сохраняется через обычные роли. Desktop занимается диагностикой выдачи task/наследования High, не продуктовой разработкой. Реальные UI/core/backend/infra High-задачи пока не запущены.
+**Текущий статус:** исходный план выполнен до source/server checkpoint, не до production E2E. User явно поручил обычным разработчикам реализацию и разрешил сервер/sudo; реальные child jobs перечислены в integration report. Новых ролей нет. Временный variant4 existing specialist profiles выставлялся High и возвращён Medium, без запрещённой пользователем повторной настройки/metadata-проверки; это не утверждение independently verified runtime effort.
 
 ## План исполнения координатором — пока не выполнен
 
@@ -100,7 +100,7 @@ Room должна иметь schema version/тестируемые миграц�
 
 1. Обычный root **archi** назначает отдельные sibling-сессии **developer** для UI/core/backend; новые имена/профили не нужны. Прямой developer способен работать без task, не должен ждать настройки параллелизма и не вызывает себя/предков. В текущем API developer требует ручного вызова пользователем (`@developer` через autocomplete); это ограничение не обходить.
 2. Task нужен только для реальных поручений помощникам. Вызовы текущего Арчи к desktop подтверждены returned child IDs. Не стартовать новые OpenCode/model сессии из shell/HTTP ради обхода; отсутствие инструмента в другой сессии диагностировать отдельно, не угадывать по файлу permission или советовать restart без причины.
-3. High проверяется фактическим variant дочерней сессии. Установленный task не имеет model/variant override; явная model дочернего профиля мешает наследованию родительского High, применяется configured Medium. Для временного High потребуются минимальные согласованные изменения существующих variants/их проверка и возврат после этапа, не новые роли. Пока они не применены; Medium не выдаётся за High.
+3. Task не имеет model/variant override, parent effort не гарантирует child effort. В этом этапе по прямому указанию пользователя временно изменены только variants4 existing profiles, без новых ролей и без проверки High; после этапа восстановлен Medium. Не выдавать изменение конфигурации за независимо проверенные model metadata.
 4. Подтвердить target по датированной server-карте, не угадывать private адрес. Арчи передаёт специалисту только необходимый SSH alias/контекст, не портрет/credentials, без публикации в Git. Доступ к секретам не расширяется ради оркестрации. Текущий аудит ещё не выполнен; старый Debian/Docker/CPU inventory — ориентир, не runtime.
 5. До пакетов/сервисов/портов получить точный план после аудита и отдельное нужное sudo-разрешение. Не выполнять system upgrade/reboot/global route/firewall изменения по умолчанию. Прежние bot dirs можно реорганизовывать только в относящемся scope с backup/проверкой активности, не удалять чужое рабочее окружение вслепую.
 
@@ -114,7 +114,7 @@ Room должна иметь schema version/тестируемые миграц�
 | Sysadmin | Живой аудит,безопасный Xray/proxy/Docker/секреты/сеть/deploy/backup/документация | Никакого глобального VPN/непроверенных удалений/секретов в Git |
 | Developer backend | API/bot/serverSQL и протокольные тесты по общему контракту | Отдельное поручение root, с отдельными server-файлами; не второй автор тех же Android/core файлов и не подмена coder ролью sysadmin |
 
-Использовать обычный task/subagent с ID/chain/целью/scope/checks, не вызывать себя/предков. При необходимости второго sysadmin его назначает root-координатор параллельно, не sysadmin-self-call. Максимальная глубина2. Дочерние помощники не commit/push/общий журнал. Для worktrees/shared files нужна явная изоляция; не запускать несколько тяжёлых Android build/install на одном устройстве одновременно. Продуктовые High-сессии/worktrees не создавались; обычная desktop review-сессия отдельно проверяла конфигурацию.
+Использовать обычный task/subagent с ID/chain/целью/scope/checks, не вызывать себя/предков, максимум2уровня. Четыре worktree подготовлены root; UI/core/backend/infra писали разные файлы. Финальный social follow-up передан одному integration developer после завершения прочих writers. Дети Git/shared journal не выполняли; Git/integration и Android full-build — один root. UI/instrumentation на телефоне пока не запускались.
 
 ### Предлагаемое серверное устройство
 
@@ -147,7 +147,7 @@ new authorized consumers ─── private Docker network ── Xray SOCKS :108
 - До независимого API/bot/client кода общий DTO/auth/session/ownerID/friendACL контракт. Реальные профили/синхронизация/разрешённые интервалы проверяются end-to-end, не «потом просто склеим» по разным догадкам.
 - Документация: что реально изменено/версии/неудачи/команды/checks/rollback/backup и добавление нового consumer к10808; config примеры обезличены, не имитировать непроверенное успехом.
 
-**Фактический статус этого плана:** лишние профили удалены, документация возвращена к обычным ролям; desktop проверяет инструменты. Ни server SSH/sudo, ни перенос config/key, ни BotFather/токен, ни Docker/deploy, ни продуктовые High-вызовы не выполнялись. Git-доставка документов — отдельный принятый workflow, не серверное исполнение. Прямая разработка не зависит от наличия помощников.
+**Фактический статус:** Xray private proxy10808, PostgreSQL17.11, API и Tailscale HTTPS `/chrona` развёрнуты, source/user-secrets разделены, old Nextcloud/services сохранены. Token отсутствует, worker off, Telegram auth503; никакого fake-bot success. Proxy fail-closed/reconnect и isolated DB restore проверены; настоящие phone/login/social E2E ждут владельца. Подробности/rollback в server deployment.
 
 ### Проверенный механизм обычных субагентов и нерешённая диагностика
 
@@ -156,4 +156,4 @@ new authorized consumers ─── private Docker network ── Xray SOCKS :108
 - Обычные permissions на диске уже разрешают нужную делегацию. Pure tests установленного registry/filter/provider conversion: **31 assertions PASS**. Parent High → configured child Medium подтверждён кодом; новый blanket allow или имя с суффиксом high не решение.
 - Read-only SQL-проекция только whitelist metadata реального Desktop-хранилища показала у найденной проблемной coordinator-сессии tools.task absent и отсутствие task/* session deny; фактический variant xhigh. Это исключает два конкретных механизма скрытия, но не доказывает наличие task в отправленной модели schema. Текущая рабочая archi-сессия имеет High и действительно вызывает desktop.
 - Первоначальная точная Chrona root выборка не нашла старого developer. Дополнительная узкая SQL-проверка уже известного рабочего archi-root обнаружила в нём прежние developer-ходы: это **та же сессия после смены роли**, отдельный ID у пользователя не нужен. Только metadata последних 3 user/3 assistant developer: Sol, tools.task absent, user variants low/high/high, assistant low; тексты/parts/переписки/auth не читались. Эти поля не доказывают исходящий toolset/исторические permissions; следующий участок — effective runtime registry → prepared tools → delivery. Session permissions/конфиги не менялись.
-- До подтверждения фактических High children не объявлять исходный параллельный план запущенным. Не заменять его несколькими ручными чатами, называя их субагентами. Ручная разработка остаётся допустимой, но это отдельный способ работы. Новые профили/обязательный restart отменены DEC-018; повторять эту схему нельзя.
+- Последующее явное поручение пользователя обычным разработчикам получено, реальные task jobs UI/core/backend/sysadmin выполнены и дали код/серверный checkpoint. Пользователь отдельно запретил повторные High-проверки: source variants временно изменены/возвращены без них. Не возвращаться к старому metadata-расследованию как барьеру продолжения, не подменять выполненные task jobs ручными чатами и не приписывать непроверенные effort metadata.

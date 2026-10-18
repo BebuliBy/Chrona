@@ -1,0 +1,160 @@
+name: chrona
+x-runtime: &runtime
+  image: ${BACKEND_IMAGE:?verified backend image digest required}
+  platform: linux/amd64
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+  mem_limit: 384m
+  cpus: 0.5
+  pids_limit: 128
+  env_file:
+    - path: /etc/chrona/telegram.env
+      required: false
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,uid=10001,gid=10001"]
+  logging:
+    driver: json-file
+    options: {max-size: 5m, max-file: "2"}
+services:
+  db:
+    image: ${POSTGRES_IMAGE:?verified postgres17 alpine digest required}
+    platform: linux/amd64
+    # Explicit postgres UID for alpine candidate; verify passwd of pinned image.
+    user: "70:70"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
+    environment:
+      POSTGRES_DB: chrona
+      POSTGRES_USER: chrona
+      POSTGRES_PASSWORD_FILE: /run/private/db-password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - type: volume
+        source: db-data
+        target: /var/lib/postgresql/data
+        volume: {nocopy: true}
+      - type: bind
+        source: /etc/chrona/secrets/db-password
+        target: /run/private/db-password
+        read_only: true
+        bind: {create_host_path: false}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,uid=70,gid=70
+      - /var/run/postgresql:rw,nosuid,size=8m,uid=70,gid=70
+    networks: [app]
+    healthcheck:
+      test: [CMD, pg_isready, -U, chrona, -d, chrona]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+  api:
+    <<: *runtime
+    profiles: [api]
+    command: [api]
+    environment:
+      SECRETS_PATH: /run/secrets/chrona
+      DB_URL: jdbc:postgresql://db:5432/chrona?connectTimeout=5&socketTimeout=10&tcpKeepAlive=true
+      DB_USER: chrona
+      TELEGRAM_AUTH_ENABLED: ${TELEGRAM_AUTH_ENABLED:-false}
+      BIND_ADDRESS: 0.0.0.0
+      PORT: "8080"
+      JAVA_OPTS: -Xms32m -Xmx256m -XX:ActiveProcessorCount=1 -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
+    volumes:
+      - type: bind
+        source: /etc/chrona/secrets/app-db-password
+        target: /run/secrets/chrona/db-password
+        read_only: true
+        bind: {create_host_path: false}
+    networks: [app, api-ingress]
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-18080}:8080"
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, /opt/chrona/bin/chrona-backend, healthcheck]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+  migrate:
+    <<: *runtime
+    profiles: [maintenance]
+    restart: "no"
+    command: [migrate]
+    environment:
+      SECRETS_PATH: /run/secrets/chrona
+      DB_URL: jdbc:postgresql://db:5432/chrona?connectTimeout=5&socketTimeout=10&tcpKeepAlive=true
+      DB_USER: chrona
+      JAVA_OPTS: -Xms32m -Xmx256m -XX:ActiveProcessorCount=1 -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
+    volumes:
+      - type: bind
+        source: /etc/chrona/secrets/app-db-password
+        target: /run/secrets/chrona/db-password
+        read_only: true
+        bind: {create_host_path: false}
+    networks: [app]
+    healthcheck: {disable: true}
+  bot:
+    <<: *runtime
+    profiles: [bot]
+    command: [bot]
+    environment:
+      SECRETS_PATH: /run/secrets/chrona
+      DB_URL: jdbc:postgresql://db:5432/chrona?connectTimeout=5&socketTimeout=10&tcpKeepAlive=true
+      DB_USER: chrona
+      TELEGRAM_AUTH_ENABLED: ${TELEGRAM_AUTH_ENABLED:-false}
+      TELEGRAM_PROXY: socks5h://xray-proxy:10808
+      BIND_ADDRESS: 0.0.0.0
+      PORT: "8081"
+      JAVA_OPTS: -Xms32m -Xmx256m -XX:ActiveProcessorCount=1 -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
+    volumes:
+      - type: bind
+        source: /etc/chrona/secrets/app-db-password
+        target: /run/secrets/chrona/db-password
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /etc/chrona/secrets/telegram-token
+        target: /run/secrets/chrona/telegram-token
+        read_only: true
+        bind: {create_host_path: false}
+    networks: [app, proxy-clients]
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, /opt/chrona/bin/chrona-backend, healthcheck]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # Exactly one poller. Durable state MUST live in SQL, not writable rootfs.
+networks:
+  api-ingress:
+    name: chrona-api-ingress
+    driver_opts:
+      com.docker.network.bridge.host_binding_ipv4: 127.0.0.1
+  app:
+    name: chrona-app
+    internal: true
+  proxy-clients:
+    name: chrona-proxy-clients
+    external: true
+volumes:
+  db-data:
+    name: chrona-db-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/chrona/postgres

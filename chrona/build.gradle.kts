@@ -1,6 +1,8 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
+    id("androidx.room")
 }
 
 android {
@@ -10,8 +12,8 @@ android {
         applicationId = "by.bebuliby.chrona"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.2.0-ui"
+        versionCode = 2
+        versionName = "0.3.0-local"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
@@ -24,7 +26,18 @@ android {
     }
 }
 
+room { schemaDirectory("$projectDir/schemas") }
+
 dependencies {
+    implementation("androidx.room:room-runtime:2.8.5")
+    implementation("androidx.room:room-ktx:2.8.5")
+    ksp("androidx.room:room-compiler:2.8.5")
+    implementation("androidx.datastore:datastore-preferences:1.2.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("androidx.room:room-testing:2.8.5")
+    // JVM-only implementation of Android's org.json API for fake-transport tests; no APK dependency.
+    testImplementation("org.json:json:20240303")
     // Conservative stable BOM compatible with the existing Kotlin 2.2.10 toolchain.
     implementation(platform("androidx.compose:compose-bom:2025.08.01"))
     implementation("androidx.activity:activity-compose:1.11.0")

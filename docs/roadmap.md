@@ -19,6 +19,13 @@
 | 7. Расширение | Позже | Следующие согласованные активности и функции бота |
 | RAG / Play | Отложено | Отдельное решение; не блокируют локальный proof |
 
+## Выполненный checkpoint 2026-10-18 — актуальнее прежней таблицы плана
+
+- UI-v2/12 палитр/3 стиля/7 эмоций/explicit numeric overgoal/week-month/statistics реализованы, main/test APK собраны. LOCAL использует Room schema2/DataStore/collector, не fixtures.
+- Android client PKCE/Keystore/sync/restore/friends и explicit discovery/sharing реализован; backend80 tests, Chrona104+spike8 unit tests, infra30, SQLite3 PASS. Lint0errors17warnings,13instrumentation только compiled. Runtime phone/Keystore/Room приёмка не проведена.
+- Server Xray10808/private Docker/Postgres/API/HTTPS `/chrona` работают; real TLS proxy/direct-deny/reconnect/JDBC/migrations/backup+isolated restore/legacy Nextcloud checks PASS. Бот не создан, token отсутствует/worker off/auth503; следующий owner шаг BotFather+hidden token, затем E2E.
+- Source и runtime checkpoint не завершает year layout, streak/recurrence/effective goals/coverage/zero-curve, avatar endpoint, invites/defaults и release-signing. Их нельзя выдавать за работающие или решить молча. [Полный итог](integration-2026-10-18.md).
+
 ## Ближайшие зависимости
 
 1. Основной SM-A376E/Android16/API36 и текущий YouTube проверены, сервис пользователь включил сам; базовые real UI/lifecycle-сцены пройдены. На A33(2022) друга тестов не было, ОС неизвестна.
@@ -58,8 +65,8 @@
 
 ### Предложенный порядок
 
-Последний запрос сохраняет реализацию через существующих developer/sysadmin и субагентов, но отменяет новые High-профили/обязательный новый coordinator (DEC-018). Обычный root archi разделяет UI/core/backend между developer-сессиями, sysadmin — infra. Реальные продуктовые High-задачи ещё не запущены; task delivery и дочерний variant проверяются отдельно. Прямую работу developer не блокировать отсутствием task. Не создавать новые роли/не повторять слепые restart, не shell-launch OpenCode ради обхода. Обычные Medium/default не менялись. Zero-limit known0=100%score принят, но zero-curve/partial coverage не додуманы.
+Исходная параллельная реализация обычными ролями теперь выполнена до указанного checkpoint. Не возвращаться к отменённой схеме новых High-агентов или диагностикам вместо разработки. По просьбе пользователя4 specialist variants временно переключались и возвращены Medium без повторной High-проверки; product/session effect не приписывается по имени роли. Следом BotFather/private token/реальный phone E2E и точечные незакрытые правила.
 
-Далее два независимых направления: (1) UI-навигация/profile/cards/таблицы/анимации по принятому описанию, (2) Room/репозитории/сырой Shorts collector/миграции. Это разделение плана, **не фактический параллельный запуск агентов**. Raw storage не должен зависеть от ещё не выбранных цветов/эмоций; вычисления подключаются после принятия. Сервер/bot/VPN не разворачиваются.
+UI/core/backend/infra уже исполнялись раздельно и интегрированы. Raw storage отделён от цвета/эмоций; известная математика подключена, unknown не zero. Сервер развёрнут с разрешения; worker отдельно ждёт token. Следующие изменения выполнять по фактическому текущему состоянию, не по прежним строкам «только план».
 
 Перед реальными данными выбрать final identity/подпись/правила времени. Затем интеграция реальных history/manual values, lifecycle/battery/reboot/upgrade tests и отдельные напоминания/release-публикация. Новый yearly layout пока не придумывать; числовые примеры/предложения не объявлять утверждённой математикой.

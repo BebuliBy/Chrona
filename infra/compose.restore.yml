@@ -1,0 +1,49 @@
+name: chrona-restore
+services:
+  db:
+    image: ${POSTGRES_IMAGE:?verified postgres image digest required}
+    platform: linux/amd64
+    user: "70:70"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
+    environment:
+      POSTGRES_DB: chrona
+      POSTGRES_USER: chrona
+      POSTGRES_PASSWORD_FILE: /run/private/db-password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - type: volume
+        source: restore-data
+        target: /var/lib/postgresql/data
+        volume: {nocopy: true}
+      - type: bind
+        source: /etc/chrona/secrets/db-password
+        target: /run/private/db-password
+        read_only: true
+        bind: {create_host_path: false}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,uid=70,gid=70
+      - /var/run/postgresql:rw,nosuid,size=8m,uid=70,gid=70
+    networks: [restore]
+    healthcheck:
+      test: [CMD, pg_isready, -U, chrona, -d, chrona]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+networks:
+  restore:
+    name: chrona-restore
+    internal: true
+volumes:
+  restore-data:
+    name: chrona-restore-data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/chrona/restore-postgres

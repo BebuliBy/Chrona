@@ -1,0 +1,19 @@
+{
+  "method": "HTTPS registry index+selected linux/amd64 manifest GET; content SHA256 verified; no pull/run",
+  "cpu_runtime": "NOT_TESTED",
+  "xray": {
+    "reference": "ghcr.io/xtls/xray-core:26.3.27",
+    "index_digest": "sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7",
+    "amd64_digest": "sha256:4198aa816f04eeacde6470f4f07947eb4f701a1bba3657e366636681eaae5855"
+  },
+  "jre": {
+    "reference": "eclipse-temurin:17-jre-jammy",
+    "index_digest": "sha256:b3054a20e1a851574cdb1692dd0db5310c647e62214a2a7abecbec1b9e3ae8f1",
+    "amd64_digest": "sha256:30a8176ab22afd141ad9cd1948ad23bdb9fb7ddae666bad4a1d188d9f479d585"
+  },
+  "postgres": {
+    "reference": "postgres:17-alpine",
+    "index_digest": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+    "amd64_digest": "sha256:aa90e97ee862e558111d34cfb8b2c4bec768c2b039fb791341686928560263b3"
+  }
+}

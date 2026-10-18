@@ -1,0 +1,40 @@
+name: chrona-proxy
+services:
+  xray-proxy:
+    image: ${XRAY_IMAGE:?verified Xray image digest required}
+    platform: linux/amd64
+    user: "65532:65532"
+    command: [run, -c, /run/private/xray.json]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    volumes:
+      - type: bind
+        source: /etc/chrona/secrets/xray.json
+        target: /run/private/xray.json
+        read_only: true
+        bind: {create_host_path: false}
+    # Upstream image declares these VOLUMEs; avoid anonymous writable volumes.
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+      - /var/log/xray:rw,noexec,nosuid,size=1m,uid=65532,gid=65532
+      - /usr/local/etc/xray:rw,noexec,nosuid,size=1m
+    networks:
+      clients:
+        aliases: [xray-proxy]
+      egress: {}
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+    # No shell in distroless. No fake 'version == healthy' check.
+    # Egress readiness is an external/consumer HTTPS probe, NOT config syntax.
+networks:
+  clients:
+    name: chrona-proxy-clients
+    internal: true
+  egress:
+    name: chrona-proxy-egress

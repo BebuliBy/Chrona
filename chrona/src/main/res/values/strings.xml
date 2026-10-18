@@ -1,0 +1,4 @@
+<resources>
+    <string name="tracking_service_name">Chrona — наблюдение Shorts</string>
+    <string name="tracking_accessibility_description">Только после включения наблюдения в Chrona определяет открытый экран Shorts по структурным признакам YouTube. Не читает тексты, ролики и переписки. Маленькое окно и предупреждения не учитываются. Наблюдение можно отключить в Chrona или здесь; пробелы данных не заполняются просмотром.</string>
+</resources>

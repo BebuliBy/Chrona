@@ -1,0 +1,12 @@
+# Private runtime inputs NEVER belong here; this is defense in depth.
+*.env
+!*.env.example
+private/
+secrets/
+runtime/
+backups/
+*.dump
+*.partial
+*.jar
+backend/distribution/
+__pycache__/

@@ -1,0 +1,5 @@
+{
+  "protocol": "vless",
+  "settings": {"vnext": [{"address": "REPLACE_PRIVATELY", "port": 443, "users": [{"id": "REPLACE_PRIVATELY", "encryption": "none"}]}]},
+  "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {"serverName": "REPLACE_PRIVATELY", "publicKey": "REPLACE_PRIVATELY", "shortId": "REPLACE_PRIVATELY", "fingerprint": "chrome"}}
+}

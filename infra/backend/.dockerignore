@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!distribution/
+!distribution/bin/
+!distribution/bin/chrona-backend
+!distribution/lib/
+!distribution/lib/*.jar
