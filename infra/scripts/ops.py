@@ -18,7 +18,7 @@ DOCKER = ["/usr/bin/docker", "--host", "unix:///var/run/docker.sock"]
 SAFE_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
 FILES = {"chrona": "compose.app.yml", "chrona-proxy": "compose.proxy.yml", "chrona-restore": "compose.restore.yml"}
 KEYS = {"XRAY_IMAGE", "POSTGRES_IMAGE", "BACKEND_IMAGE", "BACKEND_CONTRACT", "CPU_SMOKE", "TELEGRAM_AUTH_ENABLED", "API_HOST_PORT"}
-ACTIONS = ("init-data", "preflight", "xray-test", "deploy-proxy", "deploy-db", "migrate", "deploy-app", "deploy-bot", "enable-telegram", "stop-app", "stop-proxy", "backup", "restore", "stop-restore")
+ACTIONS = ("init-data", "preflight", "xray-test", "deploy-proxy", "deploy-db", "migrate", "deploy-app", "deploy-bot", "enable-telegram", "disable-telegram", "stop-app", "stop-proxy", "backup", "restore", "stop-restore")
 
 
 def path_guard(path, private=False, uid=0, directory=False):
@@ -255,6 +255,17 @@ def execute(action, archive):
         run(compose("chrona", "--profile", "maintenance", "run", "-T", "--rm", "--no-deps", "--pull", "never", "migrate"), stdout=subprocess.DEVNULL)
     elif action == "enable-telegram":
         path_guard(BACKUPS, directory=True)
+        marker = json.loads(path_guard(Path("/etc/chrona/bot-identity-verified.json"), private=True).read_text())
+        import time
+        if not marker.get("get_me") or not marker.get("webhook_empty") or marker.get("pending_updates") != 0 or not 0 <= time.time() - marker.get("checked_unix", 0) < 600:
+            raise ValueError("fresh getMe/webhook/no-pending verification required")
+        workers = subprocess.run(DOCKER + ["ps", "--filter", "label=com.docker.compose.project=chrona", "--filter", "label=com.docker.compose.service=bot", "--format", "{{.Names}}"], check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=SAFE_ENV)
+        if workers.stdout.strip():
+            raise ValueError("existing worker: review rather than starting a second poller")
+        query = "SELECT (lease_holder IS NULL OR lease_until_ms < extract(epoch from clock_timestamp())*1000) AND NOT EXISTS(SELECT 1 FROM bot_inbox WHERE processed=FALSE) AND NOT EXISTS(SELECT 1 FROM bot_outbox WHERE delivered=FALSE AND discarded=FALSE) FROM bot_state WHERE id=1;"
+        state = subprocess.run(compose("chrona", "exec", "-T", "db", "psql", "-U", "chrona", "-d", "chrona", "-Atc", query), check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=SAFE_ENV)
+        if state.stdout.strip() != b"t":
+            raise ValueError("active lease/inbox/outbox requires review; no queued messages sent automatically")
         original = path_guard(ENV, private=True).read_bytes()
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         backup_path = BACKUPS / ("runtime-pre-telegram-" + stamp + ".env")
@@ -274,15 +285,35 @@ def execute(action, archive):
         replace_metadata("".join(k + "=" + v + "\n" for k, v in values.items()).encode())
         try:
             # Existing API stays auth-disabled until real worker polling is ready.
-            run(compose("chrona", "--profile", "bot", "up", "-d", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "180", "bot"), stdout=subprocess.DEVNULL)
-            run(compose("chrona", "--profile", "api", "up", "-d", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "180", "api"), stdout=subprocess.DEVNULL)
+            run(compose("chrona", "--profile", "bot", "up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "180", "bot"), stdout=subprocess.DEVNULL)
+            run(compose("chrona", "--profile", "api", "up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "180", "api"), stdout=subprocess.DEVNULL)
         except subprocess.SubprocessError:
             replace_metadata(original)
             run(compose("chrona", "--profile", "bot", "stop", "bot"), stdout=subprocess.DEVNULL)
             # Restore running API's previous auth-disabled environment too.
-            run(compose("chrona", "--profile", "api", "up", "-d", "--no-build", "--pull", "never", "api"), stdout=subprocess.DEVNULL)
+            run(compose("chrona", "--profile", "api", "up", "-d", "--no-deps", "--no-build", "--pull", "never", "api"), stdout=subprocess.DEVNULL)
             raise
         print("Worker readiness and API enabled; owner confirmation/login E2E still required")
+    elif action == "disable-telegram":
+        # Fail closed without deleting pending inbox/outbox/offset or webhook.
+        path_guard(BACKUPS, directory=True)
+        current = path_guard(ENV, private=True).read_bytes()
+        values = parse_metadata(current.decode())
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        fd = os.open(BACKUPS / ("runtime-pre-disable-telegram-" + stamp + ".env"), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as out:
+            out.write(current)
+        run(compose("chrona", "--profile", "bot", "stop", "bot"), stdout=subprocess.DEVNULL)
+        values["TELEGRAM_AUTH_ENABLED"] = "false"
+        temporary = ENV.with_name("runtime.env.disable-" + stamp)
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as out:
+            out.write("".join(k + "=" + v + "\n" for k, v in values.items()))
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, ENV)
+        run(compose("chrona", "--profile", "api", "up", "-d", "--no-deps", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "180", "api"), stdout=subprocess.DEVNULL)
+        print("Own worker stopped/API auth disabled; SQL offset/inbox/outbox retained")
     elif action in ("stop-app", "stop-restore"):
         run(compose("chrona" if action == "stop-app" else "chrona-restore", "--profile", "*", "stop"), stdout=subprocess.DEVNULL)
     elif action == "stop-proxy":

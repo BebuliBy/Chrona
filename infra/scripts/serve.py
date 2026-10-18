@@ -141,6 +141,11 @@ def db_counts():
 
 
 def smoke(endpoint):
+    metadata = private(BASE / "runtime.env")
+    flags = [line.partition("=")[2] for line in metadata.read_text().splitlines() if line.startswith("TELEGRAM_AUTH_ENABLED=")]
+    if len(flags) != 1 or flags[0] not in ("true", "false"):
+        raise ValueError("explicit auth mode required before smoke")
+    enabled = flags[0] == "true"
     counts = db_counts()
     status, body = https(endpoint, "/chrona/health/ready")
     if status != 200 or json.loads(body).get("status") != "ready":
@@ -151,12 +156,14 @@ def smoke(endpoint):
     status, body = https(endpoint, "/chrona/v1/me/discoverability", {"enabled": True}, method="PUT")
     if status != 401 or json.loads(body).get("error", {}).get("code") != "UNAUTHENTICATED":
         raise ValueError("HTTPS discoverability write auth boundary failed")
-    synthetic = {"deviceId": str(uuid.uuid4()), "deviceLabel": "Infrastructure HTTPS acceptance synthetic", "codeChallenge": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="), "codeChallengeMethod": "S256"}
-    status, body = https(endpoint, "/chrona/v1/auth/telegram/challenges", synthetic)
-    if status != 503 or json.loads(body).get("error", {}).get("code") != "TELEGRAM_NOT_CONFIGURED" or any(word in body for word in (b"t.me", b"telegramStartUrl", b"accessToken", b"refreshToken")):
-        raise ValueError("HTTPS disabled auth/no URL boundary failed")
+    if not enabled:
+        synthetic = {"deviceId": str(uuid.uuid4()), "deviceLabel": "Infrastructure HTTPS acceptance synthetic", "codeChallenge": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="), "codeChallengeMethod": "S256"}
+        status, body = https(endpoint, "/chrona/v1/auth/telegram/challenges", synthetic)
+        if status != 503 or json.loads(body).get("error", {}).get("code") != "TELEGRAM_NOT_CONFIGURED" or any(word in body for word in (b"t.me", b"telegramStartUrl", b"accessToken", b"refreshToken")):
+            raise ValueError("HTTPS disabled auth/no URL boundary failed")
     if counts != db_counts():
         raise ValueError("HTTPS smoke created identity state")
+    return enabled
 
 
 def read_state():
@@ -240,7 +247,7 @@ def main():
         current = config()
         if not unchanged_except_own(before, current, state["endpoint"]):
             raise ValueError("existing mappings changed")
-        smoke(state["endpoint"])
+        auth_enabled = smoke(state["endpoint"])
         if nextcloud(state["endpoint"]) != state["nextcloud"]:
             raise ValueError("Nextcloud root changed")
         if args.action == "apply":
@@ -248,7 +255,7 @@ def main():
         private(ORIGIN)
         if stat.S_IMODE(ORIGIN.stat().st_mode) != 0o600 or ORIGIN.read_text().strip() != "https://" + state["endpoint"].removesuffix(":443") + "/chrona/":
             raise ValueError("private origin file permissions/content mismatch")
-        print("HTTPS_CHRONA_PREFIX_CA_READY200_ME401_DISCOVERABILITY_PUT401_AUTH503_NO_IDENTITY_PASS")
+        print("HTTPS_CHRONA_PREFIX_CA_READY200_ME401_DISCOVERABILITY_PUT401_AUTH_ENABLED_NO_SYNTHETIC_LOGIN_PASS" if auth_enabled else "HTTPS_CHRONA_PREFIX_CA_READY200_ME401_DISCOVERABILITY_PUT401_AUTH503_NO_IDENTITY_PASS")
         print("NEXTCLOUD_ROOT_TRUSTED_TLS_UNCHANGED_ALL_PREEXISTING_MAPPINGS_PRESERVED")
         print("TAILNET_ONLY_NO_FUNNEL_PRIVATE_ORIGIN_FILE0600")
         return 0

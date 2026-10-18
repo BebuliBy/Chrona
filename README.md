@@ -10,8 +10,8 @@ Android/Kotlin-трекер привычек: автоматический Short
 - Android client: пользовательский HTTPS-origin, PKCE/verifier, Keystore session vault, refresh/logout, persistent frozen sync/restore/conflicts, явное upload consent, поиск/дружба и explicit-window sharing. Адресов/токенов в APK нет. Это написанный и unit-tested код, **не real-device E2E**.
 - Backend Kotlin/Ktor/JDBC: auth/sync/SQL/ACL/views/bot worker. Discoverability по умолчанию off, переключается явно в app/bot; права друзей не расширяются автоматически. Known manual поля выдаются вместе с Unavailable для неизвестных.
 - **Сервер:** reusable Xray10808 в private Docker-сети, PostgreSQL17.11, API healthy; private HTTPS path `/chrona` с сохранением Nextcloud root. Proxy TLS/direct-deny/reconnect, JDBC/migrations, DB backup/isolated restore и legacy checks выполнены. SOCKS не опубликован на host/в интернет.
-- Root build **PASS**: main/test APK, **112 Android unit tests** (104 Chrona +8 spike), backend **80**, infra **30**, SQLite migration **3**. Lint **0 errors /17 warnings**. 13 instrumentation tests скомпилированы, **не запускались**; новый APK пока не установлен/не проверен на телефоне.
-- Новый бот должен быть создан владельцем в BotFather. Token отсутствует, worker выключен, API возвращает `503 TELEGRAM_NOT_CONFIGURED` на новый login. Реальные polling/auth/sync/friend flow, Telegram-avatar endpoint и доступ телефона к tailnet ещё не приняты.
+- Root build **PASS**: main/test APK, **112 Android unit tests** (104 Chrona +8 spike), backend **80**, SQLite migration **3**. После bot activation infra **33/33 PASS**. Lint **0 errors /17 warnings**. 13 instrumentation tests скомпилированы, **не запускались**; новый APK пока не установлен/не проверен на телефоне.
+- Владелец установил token скрыто; getMe/getWebhookInfo через proxy подтвердили бота, webhook пуст. **Один worker и API healthy, Telegram auth включён**, live poll progression/SQL offset/lease наблюдались. Сообщений/входа от агента не было. Реальные owner login/sync/friend flow, Telegram-avatar endpoint и доступ телефона к tailnet ещё не приняты.
 - Годовой layout, recurrence/streak/история целей, complete/partial coverage и zero-limit curve/эмоция открыты; неизвестное не ноль. Из-за неполного Shorts общий score/цвет может быть Unavailable. [Интеграция и остатки](docs/integration-2026-10-18.md).
 - Работа реально делегирована обычным developer UI/core/backend и sysadmin с разделёнными ownership/worktrees. Новых ролей нет; временные variants специалистов возвращены Medium, без повторных High-проверок по просьбе пользователя.
 
@@ -53,8 +53,8 @@ Android/Kotlin-трекер привычек: автоматический Short
 
 ## Ближайшее действие
 
-1. Владелец создаёт нового бота через BotFather. **Token не присылать в чат/Git**: hidden installer описан в server deployment.
-2. После private token-install — getMe/configuration/worker activation, реальные updates/login/sync/friend checks. Сейчас этот этап не выполнен.
-3. HTTPS base URL получить в своём терминале: `ssh -t server 'sudo -- cat /etc/chrona/client-origin'`. Ввести значение с `/chrona/` в настройки; телефону нужен tailnet-доступ. Это private endpoint, не публичный API.
-4. Перед установкой/UI/collector-тестом попросить включить/разблокировать телефон и дождаться подтверждения. APK: `chrona/build/outputs/apk/debug/chrona-debug.apk`; не удалять старую установку ради update.
-5. Закрыть точечные правила и приёмку, не объявлять ещё не выбранные streak/year/coverage выполненными. Продолжать обычными ролями; один root Git-интегратор, никаких новых обязательных агентов/restart.
+1. Hidden token-install и verified profile/worker/API auth activation **уже выполнены**; повторно token не вводить и не создавать второй poller.
+2. Включить/разблокировать телефон по просьбе координатора и подтвердить готовность. Установить `chrona/build/outputs/apk/debug/chrona-debug.apk` поверх прежнего пакета, без удаления данных; native/UI/E2E пока не выполнены.
+3. HTTPS base URL получить в своём терминале: `ssh -t server 'sudo -- cat /etc/chrona/client-origin'`. Ввести полное значение с `/chrona/` в настройки; телефону нужен tailnet-доступ. Это private endpoint, не публичный API.
+4. Начать вход **из Chrona**, открыть сформированную Telegram-ссылку, подтвердить только собственный запрос и вернуться. Bare `/start` без payload в backend80 — noop, не признак успешного login. Не придумывать requestId и не подтверждать вместо владельца.
+5. Проверить настоящий sync/friend ACL/revoke/восстановление и закрыть точечные правила streak/year/coverage/avatar. Продолжать обычными ролями; один root Git-интегратор, без новых обязательных агентов/restart.

@@ -146,3 +146,10 @@
 - Реальный server: pinned official Xray/Postgres/JRE smoke без AVX2, private10808/no host publish, API healthy loopback и HTTPS `/chrona`, old Nextcloud mappings сохранены. TLS proxy/direct deny/reconnect, PG/JDBC/migrate/restart, consistent backup/isolated restore и legacy checks PASS; token отсутствует, worker off/auth503.
 - Root Android main/test APK/build/lint PASS:104Chrona+8spike unit tests; backend80, infra30, SQLite3 PASS. Lint0errors17warnings;13instrumentation compiled, не ran. Первый APK build прерван tool timeout, последующие полные builds успешны. APK на телефон ещё не устанавливался.
 - Подробные state/commands/limitations/BotFather/hidden token/origin/private tailnet/rollback — в новых docs/integration/local-core/android-client/UI/backend/social/server и infra README. Token/пароль/VPNsecret/private hostname/данные не добавлялись в Git.
+
+## 2026-10-18 — verified bot activation после private token install
+
+- Владелец успешно ввёл token скрытым installer; token в чат/source не передавался. Sysadmin проверил только file metadata, затем настоящий getMe/getWebhookInfo через SOCKS/TLS: verified bot, empty webhook/pending0.
+- Один worker реально started/healthy, successful poll progression/SQL offset/lease наблюдались36s, затем API auth enabled/healthy. Existing DB/proxy/backend80 image/Nextcloud root/mappings сохранены. Сообщений/login вместо владельца не отправляли, E2E не объявлен пройденным.
+- Усилены activation/rollback/bootstrap guards: fresh identity marker/queues/lease/no second worker, fail-closed webhook/pending; enabled-safe smoke не вызывает synthetic authbegin. Infra **33/33 PASS**; server Compose/native health и legacy checks PASS.
+- Android/backend source и APK не менялись. Следующий шаг — подтверждённый unlocked phone, install-r, configured tailnet/baseURL и вход из Chrona по сгенерированному request. Bare `/start` без payload остаётся noop backend80; выдуманный UUID не используется.

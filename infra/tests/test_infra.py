@@ -99,6 +99,14 @@ class SafetyTests(unittest.TestCase):
         with patch("sys.argv", ["serve", "apply"]), patch.object(serve, "config", side_effect=AssertionError("read")), patch.object(serve, "call", side_effect=AssertionError("CLI")), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(serve.main(), 0)
 
+    def test_enabled_auth_smoke_never_begins_login(self):
+        from types import SimpleNamespace
+        replies = [(200, b'{"status":"ready"}'), (401, b'{"error":{"code":"UNAUTHENTICATED"}}'), (401, b'{"error":{"code":"UNAUTHENTICATED"}}')]
+        with patch.object(serve, "private", return_value=SimpleNamespace(read_text=lambda: "TELEGRAM_AUTH_ENABLED=true\n")), patch.object(serve, "db_counts", return_value=b"0\n0\n0\n"), patch.object(serve, "https", side_effect=replies) as http:
+            self.assertTrue(serve.smoke("redacted:443"))
+            self.assertEqual(http.call_count, 3)
+            self.assertTrue(all("/auth/" not in call.args[1] for call in http.call_args_list))
+
     def test_serve_only_own_path_diff(self):
         import copy
         before = {"TCP": {"443": {"HTTPS": True}}, "Web": {"redacted:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:9999"}}}}}
@@ -130,9 +138,23 @@ class SafetyTests(unittest.TestCase):
     def test_bot_config_default_no_secret_read_no_network(self):
         with patch("sys.argv", ["configure"]), patch.object(bot_config, "token_path", side_effect=AssertionError("secret")), patch.object(bot_config, "docker", side_effect=AssertionError("docker")), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(bot_config.main(), 0)
+
+    def test_bot_config_never_calls_poll_or_send(self):
+        with self.assertRaises(ValueError):
+            bot_config.telegram_info("127.0.0.1", "FAKE_TEST", "getUpdates")
+        with self.assertRaises(ValueError):
+            bot_config.telegram_info("127.0.0.1", "FAKE_TEST", "sendMessage")
+
+    def test_bot_config_webhook_or_pending_fail_closed(self):
+        from types import SimpleNamespace
+        fake_secret = SimpleNamespace(read_text=lambda: "00000:" + "FAKE_TEST_" * 3)
+        for webhook in ({"url": "https://redacted.invalid", "pending_update_count": 0}, {"url": "", "pending_update_count": 1}):
+            with patch.object(bot_config, "token_path", return_value=fake_secret), patch.object(bot_config, "telegram_info", side_effect=[{"is_bot": True, "id": 1, "username": "FAKE_TEST_BOT"}, webhook]):
+                with self.assertRaisesRegex(ValueError, "never delete/drop"):
+                    bot_config.identify("127.0.0.1")
     def test_deployment_phase_syntax(self):
         import ast
-        for name in ("LAYOUT", "UPLOAD", "SYNC", "IMAGES", "VPN", "START", "STATUS", "DIAGNOSE", "EGRESS", "BACKUP", "VERIFY", "REFRESH_API", "API_CHECK", "FINAL_PREFLIGHT", "DATA_PERMISSIONS", "DOCS"):
+        for name in ("LAYOUT", "UPLOAD", "SYNC", "IMAGES", "VPN", "START", "STATUS", "DIAGNOSE", "EGRESS", "BACKUP", "VERIFY", "REFRESH_API", "API_CHECK", "FINAL_PREFLIGHT", "DATA_PERMISSIONS", "DOCS", "BOT_BASELINE", "BOT_CONFIGURE", "BOT_ENABLE", "BOT_OBSERVE"):
             ast.parse(deployment.PREAMBLE + getattr(deployment, name))
 
     def test_deployment_default_no_private_read_or_ssh(self):

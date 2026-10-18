@@ -1,6 +1,14 @@
 # Chrona infra: локальные исполняемые заготовки
 
-2026-10-18. **Root checkpoint80 API healthy; DB/proxy без изменений, loopback18080 + прежний private Tailscale HTTPS `/chrona`, Nextcloudroot сохранён. Telegram auth disabled, bot off до BotFather.** Последний artifact/source только `/home/niki/android-tracker/backend` (не прежний tmp74). Текущий immutable image `sha256:4d820186b4f15068348e8c9a6b4d9c01099e99285fbd47434c41442c0c3b09b6`. Backup перед update, API --no-deps; схема прежняя. Credential values не в argv/Env/tool literals/files. Runtime/checks: [server-deployment](../docs/server-deployment-2026-10-18.md); исходный [server-plan](../docs/server-plan.md).
+2026-10-18. **Root backend80 API и один bot worker healthy, Telegram auth enabled после owner token install/getMe/webhook verification.** DB/proxy/Serve без изменений, loopback18080 + private HTTPS `/chrona`, Nextcloudroot сохранён. Image `sha256:4d820186b4f15068348e8c9a6b4d9c01099e99285fbd47434c41442c0c3b09b6`, SQL прежний. Verified username только server-private metadata, token не в чат/Git/argv/Env. Runtime activation: [server-deployment](../docs/server-deployment-2026-10-18.md). Real owner login/message/phone E2E ещё не выполнен; ниже bootstrap defaults/historical checks, не указание выключить активного бота.
+
+### Активация chrona-bot-activation-20261018 выполнена
+
+Token metadata0600/uid10001/gid10001/parent0700 PASS. GetMe+getWebhookInfo реально через SOCKS/TLS, webhook empty/pending0; только после проверки private username/fresh marker и empty SQL queue/lease стартовал один worker --no-deps/native ready, затем APIauth true --no-deps. Metadata/config/DB backups сохранены.7 SQL samples/36s: poll success продвигался, max age7781ms, одна lease, persisted monotonic offset, restart0; inbox/outbox/delivery/identity creations0. Worker internal networks only/no hostports. Никаких автоматических тестовых сообщений и fake login. Retry/backoff параметры проверены по code80, новая fault/429 injection не делалась.
+
+Enabled-auth smoke **не вызывает auth-begin POST**: safe GET health/unauthenticated reads/PUT guard только, без challenge creation. `disable-telegram` — fail-closed rollback own worker/API flag с сохранением offset/inbox/outbox; не webhook delete/drop. GetMe/webhook/config/activation команды ниже уже выполнены, **не повторять без review**. Token value никогда не выводить. Обычный `/start` без payload в backend80 noop; настоящий видимый тест начинается самим owner из Chrona (Telegram link со своим реальным requestId, явное подтверждение, возврат). No real auth/messages E2E claim до owner шага.
+
+Финальная activation-проверка: **33/33 local tests PASS**, server preflight/Compose PASS, bot+API healthy, enabled-safe HTTPS200/unauth401 и NextcloudrootTLS/mappings/legacy PASS. Unit counts30 и auth503/worker-off ниже — история bootstrap, текущий state указан в начале. Native retryerror/429 fault injection в этой активации не выполнялась, live polling/SQLlease/offset и readiness проверены без rawupdates/чатов/сообщений от агента.
 
 ## Состав и границы
 

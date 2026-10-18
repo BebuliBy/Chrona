@@ -1,6 +1,36 @@
 # Chrona deployment checkpoint — 2026-10-18
 
-ID `chrona-deploy-20261018`, chain archi → sysadmin, без делегаций/Git. **Финальный refresh: root checkpoint80 API healthy, loopback18080 + прежний private tailnet HTTPS `/chrona`; Nextcloud root сохранён. Telegram auth disabled, worker off до BotFather.**
+ID основной `chrona-deploy-20261018`, активация `chrona-bot-activation-20261018`, chain archi → sysadmin, без делегаций/Git. **Текущее состояние: backend80 API + один bot worker healthy, Telegram auth enabled; private HTTPS `/chrona` и Nextcloudroot сохранены. Реальный owner login/messages E2E ещё не выполнялся.**
+
+## Актуальная активация после owner hidden token install
+
+Владелец сообщил только успешный результат hidden installer; token не передавался в чат. Первое серверное действие — **только stat metadata**: file exists/nonempty, uid:gid10001:10001,0600, root0700 parent. Значение token моделью не читалось/не выводилось; его читают только explicit runtime helper/worker для TLS-аутентификации. Credentials для sudo только private stdin, без literals/argv/Env/logs/files.
+
+До запуска: pre-state root0600 `/var/backups/chrona/bot-activation-prestate-20261018.json`, API auth false/no worker, expected backend80 image, PG/proxy IDs и identity counts, Nextcloudroot trustedTLS и Serve mappings PASS. Перед правками scripts — owninfra archive; перед активацией — consistent DB backup и root0600 runtime metadata backup `runtime-pre-telegram-*.env`.
+
+`configure_bot.py --execute` реально выполнил **getMe и getWebhookInfo через SOCKS remote DNS/TLS**. Verified username только в `/etc/chrona/telegram.env` root0600; publicidentifier возвращён родителю/владельцу, в этот repo/run не записан. Webhook URL пуст, pending_update_count0. Root0600 `/etc/chrona/bot-identity-verified.json` содержит только verification flags/timestamp. **Никаких deleteWebhook/drop_pending_updates/getUpdates preview/sendMessage тестов.** При webhook/pending/invalid identity helper fail-closed до worker/auth. Fresh marker + empty SQL inbox/outbox + inactive lease + отсутствие local worker проверяются перед enable, чтобы не запускать второй worker/не рассылать старую очередь.
+
+`ops.py enable-telegram --execute --approved`:
+- сохранил прежнюю runtime metadata;
+- выставил true, запустил ровно один own bot profile **--no-deps**, дождался native readiness с реальным successful poll;
+- только после этого пересоздал API **--no-deps** с enabled auth и проверил readiness;
+- **не** пересоздавал PG/proxy/legacy и не менял backend image/Serve. Backend80 immutable ID прежний `sha256:4d820186b4f15068348e8c9a6b4d9c01099e99285fbd47434c41442c0c3b09b6`.
+
+Реальные проверки:7 SQL samples за36s, success timestamp продвигался, максимальный age7781ms, одна стабильная lease, lease future, next_offset хранится в SQL/монотонен. Один Compose worker healthy, restartcount0; APIhealthy, actual flags true+verified name present (только boolean check, не Env dump), тот же image. Worker **только** chrona-app+chrona-proxy-clients internal networks, без hostports/direct egress. Inbox/outbox/delivered/retry jobs0, accounts/challenges/sessions counts не изменились — **сообщения не отправлялись, login не имитировался**. No local second poller/conflict symptoms observed; абсолютное отсутствие внешнего процесса с копией token не обещается.
+
+`getUpdates(timeout=5,limit=50)`/durable offset transaction/lease45s и retry0.5..30s+jitter/429 retry_after source80 проверены; native poll progression действительно наблюдалось через proxy. 5s — long-poll parameter, **не** жёсткий end-to-end SLA. Error/retry/429 ветку новой аварией в этой активации **не провоцировали**, crash/reboot durability не тестировали; SQL persistence не выдаётся за такую проверку. Предыдущие proxy outage/reconnect tests остаются отдельным pre-activation evidence.
+
+Нынешний безопасный HTTPS smoke **не делает auth-begin POST**, когда auth enabled: health200, unauthenticated GETme/PUTdiscoverability401, identity counts unchanged; NextcloudrootTLS/Serve mappings unchanged. Bootstrap API/Serve smoke обновлены с этой защитой (regression test), чтобы прежний503-тест случайно не создал login challenge. Bootstrap image-refresh также отказывается молча отключать уже enabled auth.
+
+Rollback не понадобился. При enable failure helper возвращает old metadata/stop own bot/API config; при обнаруженном stale/conflicting poll state наблюдатель fail-closed использует `ops.py disable-telegram --execute --approved`: backup, stop только own worker, auth false, recreate API --no-deps. SQLoffset/inbox/outbox сохраняются, webhook/updates не удаляются. Readiness healthcheck сам по себе Docker restart не делает; worker watchdog остаётся backend responsibility. Fresh verification/review требуется перед повторной активацией, не запускать второй poller с этим token.
+
+Финальный activation result: **33/33 local tests PASS** (включая guard против synthetic auth-begin при enabled mode), server permission/resource/Compose preflight PASS, API и bot native healthy; enabled-safe HTTPS200/unauth401, existing NextcloudrootTLS/Serve mappings/legacy container IDs/images/services PASS. PG/proxy IDs и backend80 image неизменны. `getMe/getWebhookInfo`/activation реально выполнены; 503-only bootstrap sections ниже исторические. Новые source changes только infra helpers/tests/runbook, без backend/Android/High/Git/sharedmemory.
+
+### Точный следующий owner test
+
+Владелец может сам открыть verified bot и отправить `/start` позже; **bare `/start` в backend80 нормализуется в noop и приветствия не обещает** (source transport принимает `/start <requestId>`). Для видимого настоящего login test: телефон с tailnet доступом и правильным private HTTPS base URL → нажать вход через Telegram **в Chrona** → открыть сформированную ссылку `/start <реальный requestId>` → подтвердить только собственный начатый запрос → вернуться в Chrona. Не сочинять UUID/start payload и не подтверждать чужие запросы. Actor/sysadmin ни одно сообщение/подтверждение вместо владельца не отправлял. После owner действия отдельная приёмка app↔bot/account/sync/friends ещё нужна.
+
+Ниже сохранена история bootstrap/pre-token checkpoints; их `authdisabled503`/`worker off` — прошлые состояния, **не актуальные после этой активации**.
 
 ## Последний refresh — root backend80
 

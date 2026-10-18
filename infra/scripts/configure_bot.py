@@ -15,6 +15,7 @@ import ssl
 import stat
 import struct
 import subprocess
+import time
 
 from probe import exact
 
@@ -35,12 +36,11 @@ def token_path():
     return file
 
 
-def identify(proxy_ip):
+def telegram_info(proxy_ip, token, method):
+    if method not in ("getMe", "getWebhookInfo"):
+        raise ValueError("read-only verification method required")
     if not ipaddress.ip_address(proxy_ip).is_private:
         raise ValueError("private proxy metadata IP required")
-    token = token_path().read_text().strip()
-    if not re.fullmatch(r"[0-9]{5,20}:[A-Za-z0-9_-]{20,100}", token):
-        raise ValueError("token format invalid")
     domain = b"api.telegram.org"
     with socket.create_connection((proxy_ip, 10808), timeout=10) as sock:
         sock.sendall(b"\x05\x01\x00")
@@ -55,19 +55,31 @@ def identify(proxy_ip):
             raise ValueError("SOCKS address type invalid")
         exact(sock, length + 2)
         with ssl.create_default_context().wrap_socket(sock, server_hostname=domain.decode()) as tls:
-            tls.sendall(("GET /bot" + token + "/getMe HTTP/1.1\r\nHost: api.telegram.org\r\nConnection: close\r\n\r\n").encode())
+            tls.sendall(("GET /bot" + token + "/" + method + " HTTP/1.1\r\nHost: api.telegram.org\r\nConnection: close\r\n\r\n").encode())
             response = http.client.HTTPResponse(tls)
             response.begin()
             if response.status != 200:
-                raise ValueError("getMe failed")
+                raise ValueError("Telegram verification failed")
             body = response.read(65537)
-    del token
     if len(body) > 65536:
         raise ValueError("response bound exceeded")
     data = json.loads(body)
-    user = data.get("result", {})
+    if data.get("ok") is not True:
+        raise ValueError("Telegram verification response invalid")
+    return data.get("result", {})
+
+
+def identify(proxy_ip):
+    token = token_path().read_text().strip()
+    if not re.fullmatch(r"[0-9]{5,20}:[A-Za-z0-9_-]{20,100}", token):
+        raise ValueError("token format invalid")
+    user = telegram_info(proxy_ip, token, "getMe")
+    webhook = telegram_info(proxy_ip, token, "getWebhookInfo")
+    del token
+    if webhook.get("url") or webhook.get("pending_update_count", 0) != 0:
+        raise ValueError("webhook or pending updates require review; never delete/drop")
     username = user.get("username", "")
-    if data.get("ok") is not True or user.get("is_bot") is not True or not isinstance(user.get("id"), int) or not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
+    if user.get("is_bot") is not True or not isinstance(user.get("id"), int) or not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
         raise ValueError("invalid verified bot identity")
     file = BASE / "telegram.env"
     if file.exists() or file.is_symlink():
@@ -75,6 +87,12 @@ def identify(proxy_ip):
     fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as out:
         out.write("BOT_USERNAME=" + username + "\n")
+        out.flush()
+        os.fsync(out.fileno())
+    marker = BASE / "bot-identity-verified.json"
+    fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as out:
+        json.dump({"get_me": True, "webhook_empty": True, "pending_updates": 0, "checked_unix": time.time()}, out)
         out.flush()
         os.fsync(out.fileno())
 
@@ -100,7 +118,7 @@ def main():
         token_path()  # Fail before any container/network action if token absent.
         if args.inside_net:
             identify(args.proxy_ip)
-            print("BOT_IDENTITY_VERIFIED_PRIVATE_METADATA_CREATED")
+            print("BOT_IDENTITY_VERIFIED_PRIVATE_METADATA_CREATED_WEBHOOK_EMPTY_PENDING0")
             return 0
         if name in docker("ps", "-a", "--format", "{{.Names}}").decode().splitlines():
             raise ValueError("own check consumer already exists")
@@ -112,8 +130,10 @@ def main():
         proxy = docker("inspect", "--format", '{{(index .NetworkSettings.Networks "chrona-proxy-clients").IPAddress}}', "chrona-proxy-xray-proxy-1").decode().strip()
         subprocess.run(["/usr/bin/nsenter", "--target", pid, "--net", "--", "/usr/bin/python3", "/opt/chrona/infra/scripts/configure_bot.py", "--execute", "--inside-net", "--proxy-ip", proxy], check=True, stderr=subprocess.DEVNULL, timeout=45)
         return 0
-    except (OSError, ValueError, TypeError, http.client.HTTPException, subprocess.SubprocessError):
+    except (OSError, ValueError, TypeError, http.client.HTTPException, subprocess.SubprocessError) as error:
         print("BOT_IDENTITY_NOT_CONFIGURED (details suppressed; no auth enabled/worker started)")
+        if type(error) is ValueError and str(error) in ("webhook or pending updates require review; never delete/drop", "invalid verified bot identity", "token format invalid", "existing identity metadata: backup/rotation review required"):
+            print("VERIFICATION_GUARD=" + str(error))
         return 1
     finally:
         if created:

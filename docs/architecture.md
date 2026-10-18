@@ -1,6 +1,6 @@
 # Chrona: архитектура и границы решений
 
-Статус на 2026-10-18: UI-v2, Room2/DataStore/collector, Android HTTPS/PKCE/sync/social client и Kotlin/Ktor/JDBC backend объединены. Серверные Xray/Postgres/API/private HTTPS реально работают; bot/token/phone E2E ещё нет. Fixtures только preview, старый `app` сохранён. [Текущая интеграция](integration-2026-10-18.md), [контракт](data-api-contract.md), [runtime](server-deployment-2026-10-18.md). Предложения ниже не отменяют явные оставшиеся продуктовые вопросы.
+Статус на 2026-10-18: UI-v2, Room2/DataStore/collector, Android HTTPS/PKCE/sync/social client и Kotlin/Ktor/JDBC backend объединены. Xray/Postgres/API/private HTTPS работают; после owner hidden token-install verified worker activated/auth enabled. Successful poll/SQL progress проверены, но phone/owner auth/sync E2E ещё нет. Fixtures только preview, старый `app` сохранён. [Интеграция](integration-2026-10-18.md), [контракт](data-api-contract.md), [runtime](server-deployment-2026-10-18.md).
 
 ## Целевая схема
 
@@ -147,7 +147,7 @@ new authorized consumers ─── private Docker network ── Xray SOCKS :108
 - До независимого API/bot/client кода общий DTO/auth/session/ownerID/friendACL контракт. Реальные профили/синхронизация/разрешённые интервалы проверяются end-to-end, не «потом просто склеим» по разным догадкам.
 - Документация: что реально изменено/версии/неудачи/команды/checks/rollback/backup и добавление нового consumer к10808; config примеры обезличены, не имитировать непроверенное успехом.
 
-**Фактический статус:** Xray private proxy10808, PostgreSQL17.11, API и Tailscale HTTPS `/chrona` развёрнуты, source/user-secrets разделены, old Nextcloud/services сохранены. Token отсутствует, worker off, Telegram auth503; никакого fake-bot success. Proxy fail-closed/reconnect и isolated DB restore проверены; настоящие phone/login/social E2E ждут владельца. Подробности/rollback в server deployment.
+**Фактический статус:** Xray private10808/Postgres/API/HTTPS и verified bot worker healthy, auth enabled после owner token-install. Source/secrets разделены, old Nextcloud/services сохранены. Proxy recovery/DB restore и live poll progress проверены; owner phone/login/social E2E ещё нет. Не выполнять прежний synthetic authbegin503 smoke в enabled режиме — он создаёт challenge. Подробности/rollback в server deployment.
 
 ### Проверенный механизм обычных субагентов и нерешённая диагностика
 

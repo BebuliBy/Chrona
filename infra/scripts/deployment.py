@@ -261,6 +261,7 @@ stamp=str(time.time_ns())
 fd=os.open("/var/backups/chrona/runtime-preapi-"+stamp+".env",os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
 with os.fdopen(fd,"wb") as f:f.write(old);f.flush();os.fsync(f.fileno())
 rows=dict(line.split("=",1) for line in old.decode().splitlines() if line)
+if rows.get("TELEGRAM_AUTH_ENABLED")=="true":raise RuntimeError("BOOTSTRAP_REFRESH_MUST_NOT_DISABLE_ACTIVE_AUTH")
 rows.pop("BOT_USERNAME",None)
 rows["TELEGRAM_AUTH_ENABLED"]="false"
 def metadata_write():
@@ -297,6 +298,7 @@ def http(path,body=None):
  try:
   with urllib.request.urlopen(request,timeout=15) as response:return response.status,response.read(65536)
  except urllib.error.HTTPError as e:return e.code,e.read(65536)
+enabled="TELEGRAM_AUTH_ENABLED=true" in P("/etc/chrona/runtime.env").read_text().splitlines()
 before=compose("chrona","exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT count(*) FROM accounts; SELECT count(*) FROM login_challenges; SELECT count(*) FROM device_sessions;")
 schema=compose("chrona","exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT version,checksum FROM schema_migrations ORDER BY version")
 for path in ("/health/live","/health/ready"):
@@ -308,30 +310,32 @@ for path in ("/v1/me","/v1/sync/pull","/v1/friends"):
  if status!=401 or json.loads(payload)["error"]["code"]!="UNAUTHENTICATED":raise RuntimeError("AUTHORIZATION_BOUNDARY_FAILED")
  print("HTTP_401="+path,flush=True)
 # Valid-format SYNTHETIC challenge only. No identity/login/account is fabricated.
-body={"deviceId":str(uuid.uuid4()),"deviceLabel":"Infrastructure acceptance synthetic no account","codeChallenge":base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="),"codeChallengeMethod":"S256"}
-status,payload=http("/v1/auth/telegram/challenges",body)
-if status!=503 or json.loads(payload)["error"]["code"]!="TELEGRAM_NOT_CONFIGURED":raise RuntimeError("DISABLED_TELEGRAM_AUTH_FAILED")
-if any(word in payload for word in (b"telegramStartUrl",b"t.me",b"accessToken",b"refreshToken")):raise RuntimeError("DISABLED_AUTH_LEAK")
+if not enabled:
+ body={"deviceId":str(uuid.uuid4()),"deviceLabel":"Infrastructure acceptance synthetic no account","codeChallenge":base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="),"codeChallengeMethod":"S256"}
+ status,payload=http("/v1/auth/telegram/challenges",body)
+ if status!=503 or json.loads(payload)["error"]["code"]!="TELEGRAM_NOT_CONFIGURED":raise RuntimeError("DISABLED_TELEGRAM_AUTH_FAILED")
+ if any(word in payload for word in (b"telegramStartUrl",b"t.me",b"accessToken",b"refreshToken")):raise RuntimeError("DISABLED_AUTH_LEAK")
 after=compose("chrona","exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT count(*) FROM accounts; SELECT count(*) FROM login_challenges; SELECT count(*) FROM device_sessions;")
 if before!=after:raise RuntimeError("DISABLED_AUTH_CREATED_STATE")
-print("HTTP_503_TELEGRAM_NOT_CONFIGURED_NO_URL_NO_ACCOUNT_CHALLENGE_SESSION_CREATED",flush=True)
+print("AUTH_ENABLED_NO_SYNTHETIC_LOGIN_REQUEST_NO_IDENTITY_CREATED" if enabled else "HTTP_503_TELEGRAM_NOT_CONFIGURED_NO_URL_NO_ACCOUNT_CHALLENGE_SESSION_CREATED",flush=True)
 ports=json.loads(docker("inspect","--format",'{{json .HostConfig.PortBindings}}',"chrona-api-1"))
 if ports!={"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"18080"}]}:raise RuntimeError("API_HOST_BIND_NOT_LOOPBACK_ONLY")
 cmd(["docker","exec","chrona-api-1","/bin/sh","-c","test ! -e /run/secrets/chrona/telegram-token"])
 print("LOOPBACK_ONLY18080_AND_NO_API_TELEGRAM_TOKEN_MOUNT",flush=True)
-compose("chrona","--profile","api","restart","api")
-for i in range(90):
- try:
-  status,payload=http("/health/ready")
-  if status==200:break
- except (OSError,ValueError):pass
- time.sleep(1)
-else:raise RuntimeError("API_RESTART_RECONNECT_FAILED")
+if not enabled:
+ compose("chrona","--profile","api","restart","api")
+ for i in range(90):
+  try:
+   status,payload=http("/health/ready")
+   if status==200:break
+  except (OSError,ValueError):pass
+  time.sleep(1)
+ else:raise RuntimeError("API_RESTART_RECONNECT_FAILED")
 if schema!=compose("chrona","exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT version,checksum FROM schema_migrations ORDER BY version"):raise RuntimeError("MIGRATION_CHANGED")
 if before!=compose("chrona","exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT count(*) FROM accounts; SELECT count(*) FROM login_challenges; SELECT count(*) FROM device_sessions;"):raise RuntimeError("RESTART_CREATED_IDENTITY")
 names=docker("ps","-a","--format","{{.Names}}").decode().splitlines()
-if "chrona-bot-1" in names:raise RuntimeError("BOT_PROFILE_UNEXPECTEDLY_STARTED")
-print("API_RESTART_JDBC_RECONNECT_SAME_MIGRATION_NO_WORKER_OK",flush=True)
+if not enabled and "chrona-bot-1" in names:raise RuntimeError("BOT_PROFILE_UNEXPECTEDLY_STARTED")
+print("API_AUTH_ENABLED_READONLY_SAME_MIGRATION_NO_SYNTHETIC_LOGIN" if enabled else "API_RESTART_JDBC_RECONNECT_SAME_MIGRATION_NO_WORKER_OK",flush=True)
 '''
 FINAL_PREFLIGHT = r'''
 sys.path.insert(0,"/opt/chrona/infra/scripts")
@@ -344,8 +348,10 @@ for step,check in (("private_paths_metadata",lambda:ops.preflight("preflight")),
   # Own guard errors are fixed code strings, never include config values.
   print("PREFLIGHT_GUARD="+step+":"+str(e),flush=True);raise
 for project in ("chrona-proxy","chrona","chrona-restore"):ops.run(ops.compose(project,"config","--quiet"),stdout=subprocess.DEVNULL)
-assert not P("/etc/chrona/secrets/telegram-token").exists()
-print("FINAL_PERMISSION_RESOURCE_COMPOSE_PREFLIGHT_PASS_TOKEN_ABSENT")
+active=ops.parse_metadata(P("/etc/chrona/runtime.env").read_text()).get("TELEGRAM_AUTH_ENABLED")=="true"
+if P("/etc/chrona/secrets/telegram-token").exists():ops.secret_guard("telegram-token",10001)
+elif active:raise RuntimeError("ENABLED_AUTH_TOKEN_MISSING")
+print("FINAL_PERMISSION_RESOURCE_COMPOSE_PREFLIGHT_PASS_AUTH_ENABLED_TOKEN_METADATA_OK" if active else "FINAL_PERMISSION_RESOURCE_COMPOSE_PREFLIGHT_PASS_AUTH_DISABLED")
 '''
 DATA_PERMISSIONS = r'''
 before={}
@@ -378,6 +384,89 @@ with tarfile.open(fileobj=sys.stdin.buffer,mode="r|*") as archive:
   os.replace(temp,target)
 print("OWN_DEPLOYMENT_DOCS_STAGED_WITH_BACKUP")
 '''
+BOT_BASELINE = r'''
+sys.path.insert(0,"/opt/chrona/infra/scripts")
+import ops,serve
+ops.secret_guard("telegram-token",10001)
+p=P("/etc/chrona/secrets/telegram-token");metadata=p.stat()
+print("TOKEN_METADATA_ONLY="+json.dumps({"exists":True,"mode":oct(stat.S_IMODE(metadata.st_mode)),"uid":metadata.st_uid,"gid":metadata.st_gid,"nonempty":metadata.st_size>0}),flush=True)
+state,before=serve.read_state()
+if not serve.unchanged_except_own(before,serve.config(),state["endpoint"]):raise RuntimeError("SERVE_MAPPING_CHANGED")
+if serve.nextcloud(state["endpoint"])!=state["nextcloud"]:raise RuntimeError("NEXTCLOUD_TLS_BASELINE_FAILED")
+status,body=serve.https(state["endpoint"],"/chrona/health/ready")
+if status!=200:raise RuntimeError("API_HTTPS_BASELINE_FAILED")
+names=docker("ps","--filter","label=com.docker.compose.project=chrona","--filter","label=com.docker.compose.service=bot","--format","{{.Names}}").decode().splitlines()
+if names:raise RuntimeError("EXISTING_WORKER_REVIEW_REQUIRED")
+values=ops.parse_metadata(P("/etc/chrona/runtime.env").read_text())
+if values.get("TELEGRAM_AUTH_ENABLED")!="false":raise RuntimeError("API_ALREADY_ENABLED_REVIEW_REQUIRED")
+baseline={"time":time.time(),"image":values["BACKEND_IMAGE"],"services":{}}
+for name in ("chrona-api-1","chrona-db-1","chrona-proxy-xray-proxy-1"):
+ baseline["services"][name]={"id":docker("inspect","--format","{{.Id}}",name).decode().strip(),"image":docker("inspect","--format","{{.Image}}",name).decode().strip()}
+baseline["identity_counts"]=compose("chrona","exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT count(*) FROM accounts;SELECT count(*) FROM login_challenges;SELECT count(*) FROM device_sessions;").decode()
+path=P("/var/backups/chrona/bot-activation-prestate-20261018.json")
+fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,"w") as f:json.dump(baseline,f);f.flush();os.fsync(f.fileno())
+print("ACTIVATION_PRESTATE_SAVED_NO_WORKER_API_DISABLED_NEXTCLOUD_TLS_SERVE_OK")
+'''
+BOT_CONFIGURE = r'''
+r=subprocess.run(["python3","/opt/chrona/infra/scripts/configure_bot.py","--execute"],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=90)
+sys.stdout.buffer.write(r.stdout);sys.stdout.flush()
+assert r.returncode==0
+'''
+BOT_ENABLE = r'''
+cmd(["python3","/opt/chrona/infra/scripts/ops.py","backup","--execute","--approved"])
+r=subprocess.run(["python3","/opt/chrona/infra/scripts/ops.py","enable-telegram","--execute","--approved"],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=420)
+sys.stdout.buffer.write(r.stdout);sys.stdout.flush()
+if r.returncode:
+ print("ACTIVATION_FAILED_REDACTED_CHECK_ROLLBACK_STATE",flush=True)
+ raise RuntimeError("ENABLE_FAILED")
+print("ONE_WORKER_READY_THEN_API_AUTH_ENABLED")
+'''
+BOT_OBSERVE = r'''
+sys.path.insert(0,"/opt/chrona/infra/scripts")
+import ops,serve
+values=ops.parse_metadata(P("/etc/chrona/runtime.env").read_text())
+if values.get("TELEGRAM_AUTH_ENABLED")!="true":raise RuntimeError("AUTH_FLAG_NOT_ENABLED")
+baseline=json.loads(P("/var/backups/chrona/bot-activation-prestate-20261018.json").read_text())
+workers=docker("ps","--filter","label=com.docker.compose.project=chrona","--filter","label=com.docker.compose.service=bot","--format","{{.Names}}").decode().splitlines()
+if workers!=["chrona-bot-1"]:raise RuntimeError("WORKER_COUNT_CONFLICT")
+for name in ("chrona-bot-1","chrona-api-1"):
+ if docker("inspect","--format","{{.Image}}",name).decode().strip()!=values["BACKEND_IMAGE"]:raise RuntimeError("UNEXPECTED_IMAGE")
+ cmd(["docker","exec",name,"/bin/sh","-c",'test "$TELEGRAM_AUTH_ENABLED" = true && test -n "$BOT_USERNAME"'])
+networks=json.loads(docker("inspect","--format",'{{json .NetworkSettings.Networks}}',"chrona-bot-1"))
+if set(networks)!={"chrona-app","chrona-proxy-clients"}:raise RuntimeError("WORKER_DIRECT_EGRESS_RISK")
+if json.loads(docker("inspect","--format",'{{json .HostConfig.PortBindings}}',"chrona-bot-1")):raise RuntimeError("BOT_PORT_PUBLISHED")
+samples=[]
+for index in range(7):
+ raw=compose("chrona","exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT next_offset,lease_holder,lease_until_ms,success_ms,progress_ms,(extract(epoch from clock_timestamp())*1000)::bigint FROM bot_state WHERE id=1;").decode().strip().split("|")
+ offset,holder,lease,success,progress,now=int(raw[0]),raw[1],*map(int,raw[2:])
+ if not holder or lease<=now or not 0<=now-success<20000 or not 0<=now-progress<20000 or offset<0:raise RuntimeError("POLL_LEASE_READINESS_STALE_OR_CONFLICT")
+ samples.append((offset,holder,success,now-success))
+ if index<6:time.sleep(6)
+if len({sample[1] for sample in samples})!=1 or samples[-1][2]<=samples[0][2] or any(a[0]>b[0] for a,b in zip(samples,samples[1:])):raise RuntimeError("DURABLE_OFFSET_LEASE_POLL_PROGRESS_FAILED")
+for name in ("chrona-bot-1","chrona-api-1"):
+ if docker("inspect","--format",'{{.State.Health.Status}}',name).decode().strip()!="healthy":raise RuntimeError("NATIVE_HEALTH_NOT_READY")
+ if name=="chrona-bot-1" and docker("inspect","--format",'{{.RestartCount}}',name).decode().strip()!="0":raise RuntimeError("WORKER_RESTART_CONFLICT")
+queues=compose("chrona","exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT count(*) FROM bot_inbox;SELECT count(*) FROM bot_outbox;SELECT count(*) FROM bot_outbox WHERE delivered=TRUE;SELECT count(*) FROM bot_outbox WHERE attempts>0;").decode().splitlines()
+if any(int(n) for n in queues):raise RuntimeError("REAL_INBOUND_OR_DELIVERY_ACTIVITY_REQUIRES_SEPARATE_OWNER_REVIEW")
+identity=compose("chrona","exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT count(*) FROM accounts;SELECT count(*) FROM login_challenges;SELECT count(*) FROM device_sessions;").decode()
+if identity!=baseline["identity_counts"]:raise RuntimeError("IDENTITY_CHANGED_NO_LOGIN_TEST_ALLOWED")
+for name in ("chrona-db-1","chrona-proxy-xray-proxy-1"):
+ if docker("inspect","--format","{{.Id}}",name).decode().strip()!=baseline["services"][name]["id"]:raise RuntimeError("PG_PROXY_RECREATED")
+state,before=serve.read_state()
+if not serve.unchanged_except_own(before,serve.config(),state["endpoint"]) or serve.nextcloud(state["endpoint"])!=state["nextcloud"]:raise RuntimeError("HTTPS_LEGACY_MAPPING_OR_ROOT_CHANGED")
+for path,expected in (("/chrona/health/ready",200),("/chrona/v1/me",401)):
+ status,body=serve.https(state["endpoint"],path)
+ if status!=expected:raise RuntimeError("ENABLED_API_READONLY_HTTPS_SMOKE_FAILED")
+text=P("/etc/chrona/telegram.env").read_text().strip()
+import re
+if not re.fullmatch(r"BOT_USERNAME=[A-Za-z0-9_]{5,32}",text):raise RuntimeError("INVALID_PUBLIC_USERNAME_METADATA")
+print("VERIFIED_PUBLIC_BOT_USERNAME=@"+text.split("=",1)[1],flush=True)
+print("REAL_POLL_PROGRESS_SAMPLES="+str(len(samples))+" WINDOW_SECONDS=36 MAX_SUCCESS_AGE_MS="+str(max(s[3] for s in samples)),flush=True)
+print("ONE_WORKER_LEASE_STABLE_DURABLE_OFFSET_MONOTONIC_NATIVE_HEALTHY_RESTART0")
+print("NO_INBOX_OUTBOX_DELIVERY_OR_IDENTITY_CREATED_NO_MESSAGES_SENT")
+print("API_AUTH_ENABLED_HTTPS200_UNAUTH401_PG_PROXY_IDS_SERVE_NEXTCLOUD_TLS_UNCHANGED")
+'''
 
 
 def bundle():
@@ -406,7 +495,7 @@ def bundle():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("layout", "upload", "sync", "images", "vpn", "start", "status", "diagnose", "egress", "backup", "verify", "refresh-api", "api-check", "legacy-check", "api-publish", "final-preflight", "data-permissions", "docs", "serve-baseline", "serve-apply", "serve-check"))
+    parser.add_argument("phase", choices=("layout", "upload", "sync", "images", "vpn", "start", "status", "diagnose", "egress", "backup", "verify", "refresh-api", "api-check", "legacy-check", "api-publish", "final-preflight", "data-permissions", "docs", "serve-baseline", "serve-apply", "serve-check", "bot-baseline", "bot-configure", "bot-enable", "bot-observe"))
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--password-stdin", action="store_true")
     args = parser.parse_args()
@@ -434,10 +523,15 @@ def main():
     if args.phase.startswith("serve-"):
         action = args.phase.removeprefix("serve-")
         code = PREAMBLE + 'r=subprocess.run(["python3","/opt/chrona/infra/scripts/serve.py",' + repr(action) + ',"--execute"],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)\nsys.stdout.buffer.write(r.stdout);sys.stdout.flush()\nassert r.returncode==0'
+    elif args.phase.startswith("bot-"):
+        code = PREAMBLE + {"bot-baseline": BOT_BASELINE, "bot-configure": BOT_CONFIGURE, "bot-enable": BOT_ENABLE, "bot-observe": BOT_OBSERVE}[args.phase]
     else:
         code = PREAMBLE + {"layout": LAYOUT, "upload": UPLOAD, "sync": SYNC, "images": IMAGES, "vpn": VPN, "start": START, "status": STATUS, "diagnose": DIAGNOSE, "egress": EGRESS, "backup": BACKUP, "verify": VERIFY, "refresh-api": REFRESH_API, "api-check": API_CHECK, "legacy-check": VERIFY.split("# Two independent")[0], "api-publish": 'compose("chrona","config","--quiet")\ncompose("chrona","--profile","api","up","-d","--no-build","--pull","never","--wait","--wait-timeout","180","api")\nprint("API_LOOPBACK_REPUBLISH_OK")', "final-preflight": FINAL_PREFLIGHT, "data-permissions": DATA_PERMISSIONS, "docs": DOCS}[args.phase]
     # Errors may contain private network URLs: suppress raw exception/details.
-    wrapped = "try:\n" + "\n".join(" " + line for line in code.splitlines()) + "\nexcept BaseException:\n print('PHASE_FAILED_DETAILS_SUPPRESSED'); sys.exit(1)\n"
+    rollback = ""
+    if args.phase == "bot-observe":
+        rollback = "\n if str(error) in ('POLL_LEASE_READINESS_STALE_OR_CONFLICT','WORKER_COUNT_CONFLICT','WORKER_RESTART_CONFLICT','DURABLE_OFFSET_LEASE_POLL_PROGRESS_FAILED','NATIVE_HEALTH_NOT_READY','WORKER_DIRECT_EGRESS_RISK','BOT_PORT_PUBLISHED'):\n  r=subprocess.run(['python3','/opt/chrona/infra/scripts/ops.py','disable-telegram','--execute','--approved'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL);sys.stdout.buffer.write(r.stdout);sys.stdout.flush()\n  print('POLL_CONFLICT_FAILCLOSED_ROLLBACK_OK' if r.returncode==0 else 'POLL_CONFLICT_ROLLBACK_REQUIRES_REVIEW')"
+    wrapped = "try:\n" + "\n".join(" " + line for line in code.splitlines()) + "\nexcept BaseException as error:" + rollback + "\n print('PHASE_FAILED_DETAILS_SUPPRESSED'); sys.exit(1)\n"
     command = "sudo -S -p '' -- python3 -c " + shlex.quote(wrapped)
     try:
         result = subprocess.run(SSH + [command], input=secret+b"\n"+payload, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=1200)

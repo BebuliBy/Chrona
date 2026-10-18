@@ -23,7 +23,7 @@
 
 - UI-v2/12 палитр/3 стиля/7 эмоций/explicit numeric overgoal/week-month/statistics реализованы, main/test APK собраны. LOCAL использует Room schema2/DataStore/collector, не fixtures.
 - Android client PKCE/Keystore/sync/restore/friends и explicit discovery/sharing реализован; backend80 tests, Chrona104+spike8 unit tests, infra30, SQLite3 PASS. Lint0errors17warnings,13instrumentation только compiled. Runtime phone/Keystore/Room приёмка не проведена.
-- Server Xray10808/private Docker/Postgres/API/HTTPS `/chrona` работают; real TLS proxy/direct-deny/reconnect/JDBC/migrations/backup+isolated restore/legacy Nextcloud checks PASS. Бот не создан, token отсутствует/worker off/auth503; следующий owner шаг BotFather+hidden token, затем E2E.
+- Server Xray10808/private Docker/Postgres/API/HTTPS `/chrona` работают; proxy/reconnect/JDBC/backuprestore/legacy checks PASS. Owner hidden token-install и verified worker/API auth activation **выполнены**: один worker healthy/live poll progression. Infra33tests PASS; следующий owner шаг — phone/tailnet/настоящий login/sync/social E2E, не повторный BotFather.
 - Source и runtime checkpoint не завершает year layout, streak/recurrence/effective goals/coverage/zero-curve, avatar endpoint, invites/defaults и release-signing. Их нельзя выдавать за работающие или решить молча. [Полный итог](integration-2026-10-18.md).
 
 ## Ближайшие зависимости
