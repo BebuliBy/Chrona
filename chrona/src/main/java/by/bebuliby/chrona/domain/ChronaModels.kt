@@ -202,3 +202,13 @@ data class SharingGrantDraft(
 enum class SyncStatus { LOCAL_ONLY, IDLE, SYNCING, OFFLINE, ERROR }
 data class SyncState(val status: SyncStatus, val lastSuccessAt: Instant?, val pendingOperations: Int,
     val automaticEnabled: Boolean = true)
+
+data class UpdateUiState(
+    val checking: Boolean = false,
+    val required: Boolean = false,
+    val versionName: String = "",
+    val downloading: Boolean = false,
+    val progressPercent: Int? = null,
+    val installerPermissionRequired: Boolean = false,
+    val message: String? = null,
+)

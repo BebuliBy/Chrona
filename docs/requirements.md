@@ -1,5 +1,21 @@
 # Требования Chrona
 
+## Постоянная ссылка, обязательные updates и вход — 2026-10-18/19
+
+Прямое поручение владельца, approval server плана получен:
+- Одна permanent APK ссылка. Каждый запуск проверяет newer release; verified
+  update показывает full-screen gate без dismiss/skip и не пускает в обычный UI
+  до обновления, но сбор/sync продолжаются независимо от gate. Android install
+  consent/OSHome не обходятся. Старой версии без updater нужна однократная установка.
+- Sync немедленно при открытии, target5s foreground; target10min background через
+  one-time scheduler, best effort/Doze/force-stop ограничения честны. Это актуальнее
+  прежних target10s/process-loop/background15min sections.
+- Первый/необходимый вход — единый welcome с часами Chrona, Telegram icon/button
+  и «Продолжить без учётной записи». Guest локален, без скрытого upload/clear data.
+- До принятия friend request видны known name/@username, не account/request UUID.
+- Notices3s; даты выбираются календарём, friend week/month selection и font
+  соответствуют реальному режиму. [Релиз/фактический статус](release-0.4.0-2026-10-19.md).
+
 ## VPN и частота отправки — уточнение 2026-10-18
 
 Владелец запросил target **5–10с**, желательно без открытого UI, и устойчивость к

@@ -2,6 +2,6 @@
   "id": "chrona",
   "prefix": "/",
   "upstream": "http://localhost:18080",
-  "delegates": [],
+  "delegates": ["/updates/chrona/"],
   "origin_file": "/etc/chrona/client-origin"
 }

@@ -22,15 +22,35 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import by.bebuliby.chrona.domain.*
+import kotlinx.coroutines.delay
 
 /** Production entry point. All facts, permissions and derived business values come from core. */
 @Composable
 fun ChronaApp(state: ChronaUiState, dispatch: (ChronaAction) -> Unit) {
+    val currentDispatch by rememberUpdatedState(dispatch)
+    val notice = state.notice
+    LaunchedEffect(notice?.id) {
+        if (notice != null) {
+            delay(3_000)
+            currentDispatch(ChronaAction.DismissNotice(notice.id))
+        }
+    }
+    var updateCheckMessageVisible by remember(state.update.message) { mutableStateOf(!state.update.message.isNullOrBlank()) }
+    LaunchedEffect(state.update.message) {
+        if (!state.update.message.isNullOrBlank()) { delay(3_000); updateCheckMessageVisible = false }
+    }
+    val updateCheckError = updateCheckMessageVisible && !state.update.required && !state.update.checking && !state.update.downloading
     val photoPolicy = LocalChronaRemotePhotoPolicy.current
     val photoCache = remember(photoPolicy, state.profile.localProfileId, state.profile.accountId, state.profile.telegramLinked) { RemotePhotoCache() }
     DisposableEffect(photoCache) { onDispose { photoCache.close() } }
     CompositionLocalProvider(LocalRemotePhotoCache provides photoCache) {
-        ChronaTheme(state.preferences) { ChronaContent(state, dispatch) }
+        ChronaTheme(state.preferences) {
+            when {
+                state.update.required -> MandatoryUpdateScreen(state.update, dispatch)
+                state.showAccountEntry -> AccountEntryScreen(state, dispatch, updateCheckError)
+                else -> ChronaContent(state, dispatch, updateCheckError)
+            }
+        }
     }
 }
 
@@ -51,7 +71,7 @@ private fun MainTab.icon(): ImageVector = when (this) {
 }
 
 @Composable
-private fun ChronaContent(state: ChronaUiState, dispatch: (ChronaAction) -> Unit) {
+private fun ChronaContent(state: ChronaUiState, dispatch: (ChronaAction) -> Unit, updateCheckError: Boolean = false) {
     var profileMenu by remember { mutableStateOf(false) }
     var addHabit by rememberSaveable { mutableStateOf(false) }
     var lastAnimatedId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -157,16 +177,7 @@ private fun ChronaContent(state: ChronaUiState, dispatch: (ChronaAction) -> Unit
                 }
             }
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("busy_indicator"))
-            state.notice?.let { notice ->
-                userNoticeMessage(notice)?.let { message ->
-                Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(message, Modifier.weight(1f).testTag("ui_notice"), style = MaterialTheme.typography.bodySmall)
-                        IconButton(onClick = { dispatch(ChronaAction.DismissNotice(notice.id)) }) { Icon(Icons.Outlined.Close, "Закрыть сообщение") }
-                    }
-                }
-                }
-            }
+            TransientNoticeBanner(state.notice, updateCheckError = updateCheckError)
             Box(Modifier.weight(1f)) {
                 when {
                     state.settingsOpen -> SettingsPage(state, dispatch)
@@ -184,6 +195,16 @@ private fun ChronaContent(state: ChronaUiState, dispatch: (ChronaAction) -> Unit
         }
     }
     if (addHabit) CreateHabitDialog(state.selectedDay, state.busy, dispatch, onDismiss = { addHabit = false })
+}
+
+@Composable
+internal fun TransientNoticeBanner(notice: UiNotice?, modifier: Modifier = Modifier, updateCheckError: Boolean = false) {
+    val message = notice?.let(::userNoticeMessage)
+        ?: if (updateCheckError) "Не удалось проверить обновления. Повторите позже." else return
+    Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = modifier.fillMaxWidth()) {
+        Text(message, Modifier.padding(horizontal = 16.dp, vertical = 12.dp).testTag("ui_notice"),
+            style = MaterialTheme.typography.bodySmall)
+    }
 }
 
 @Composable

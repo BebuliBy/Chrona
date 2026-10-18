@@ -1,5 +1,12 @@
 # Chrona — интеграционный checkpoint 2026-10-18
 
+**Latest continuation2026-10-19:** code6/0.4.0-update built и опубликован по
+permanent `/updates/chrona/latest.apk`; mandatory update UI, welcome, dates,
+notice3s, friendperiod/names, sync immediate/5s foreground/target10min background.
+API names deployed отдельно, worker/DB/Nextcloud сохранены. Только assemble/installDist
+и focused deployment acceptance, без Android tests/lint/phone install в этом этапе.
+Owner ждёт нового unlocked confirmation. [Релиз](release-0.4.0-2026-10-19.md).
+
 **Новое подготовленное обновление:** code5/0.3.3-sync assembleDebug PASS, ещё не
 installed. Network-session preservation/default-VPN retry, loop10s/signals5s/
 Shorts slices5s и refetch friend. Read-only server: OWNERaccepted101, FRIEND0/

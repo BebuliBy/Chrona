@@ -33,10 +33,18 @@ class Social(private val identity: Identity, private val activities: Activities)
         return obj("items" to arr(ids.map { JsonObject(identity.publicUser(c, it) + ("relation" to str("accepted"))) }), "nextCursor" to JsonNull)
     }
     fun friends(p: Principal) = db.tx { c -> identity.checkSession(c, p); friends(c, p.accountId) }
-    fun requests(c: Connection, owner: String) = obj("items" to arr(c.query("SELECT * FROM friend_requests WHERE sender_id=? OR target_id=? ORDER BY id", owner, owner) {
-        obj("requestId" to str(it.getString("id")), "senderAccountId" to str(it.getString("sender_id")),
-            "targetAccountId" to str(it.getString("target_id")), "state" to str(it.getString("state")))
-    }))
+    fun requests(c: Connection, owner: String): JsonObject {
+        val rows = c.query("SELECT id,sender_id,target_id,state FROM friend_requests WHERE sender_id=? OR target_id=? ORDER BY id", owner, owner) {
+            listOf(it.getString("id"),it.getString("sender_id"),it.getString("target_id"),it.getString("state"))
+        }
+        return obj("items" to arr(rows.map { (request,sender,target,state) ->
+            // Only a participant sees this request; label the OTHER participant with
+            // the same public name summary used by accepted friends/search, never an ID.
+            val other = if (target == owner) sender else target
+            obj("requestId" to str(request),"senderAccountId" to str(sender),"targetAccountId" to str(target),
+                "state" to str(state),"displayName" to identity.publicUser(c,other)["displayName"])
+        }))
+    }
     fun requests(p: Principal) = db.tx { c -> identity.checkSession(c, p); requests(c, p.accountId) }
     fun accepted(c: Connection, owner: String, friend: String): Boolean {
         val (a,b) = listOf(uuid(owner), uuid(friend)).sorted()

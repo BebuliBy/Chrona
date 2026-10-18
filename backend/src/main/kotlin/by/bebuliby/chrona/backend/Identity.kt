@@ -85,10 +85,17 @@ class Identity(val db: Database, val clock: Clock, val botUsername: String? = nu
         // Username never used as identity. New accounts are NOT discoverable by default.
         c.exec("UPDATE login_challenges SET state='confirmed',account_id=? WHERE id=?", account, q.id)
     }
-    fun safeName(value: String) = value.filterNot { it.isISOControl() }.take(120).ifBlank { "Chrona user" }
+    fun safeName(value: String): String {
+        val cleaned = value.filterNot { it.isISOControl() }.trim().take(120)
+        // Blank/legacy-placeholder/ID-only labels are not a person's public name.
+        return if (cleaned.isBlank() || cleaned == "Chrona user" ||
+            cleaned.matches(Regex("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"))) "Пользователь" else cleaned
+    }
     fun confirmedName(name: String, username: String?): String {
         val nick = username?.takeIf { it.matches(Regex("[A-Za-z0-9_]{5,32}")) }?.lowercase(java.util.Locale.ROOT)
-        return if (nick == null) safeName(name) else "${safeName(name).take(80)} (@$nick)"
+        val knownName = safeName(name)
+        if (nick == null || Regex("@${Regex.escape(nick)}(?![A-Za-z0-9_])",RegexOption.IGNORE_CASE).containsMatchIn(knownName)) return knownName
+        return "${knownName.take(80)} (@$nick)"
     }
 
     fun exchange(request: String, input: JsonObject): JsonObject = db.tx { c ->
@@ -167,7 +174,7 @@ class Identity(val db: Database, val clock: Clock, val botUsername: String? = nu
         }
     }
     fun publicUser(c: Connection, account: String): JsonObject = c.query("SELECT id,display_name FROM accounts WHERE id=?", uuid(account)) {
-        obj("accountId" to str(it.getString(1)), "displayName" to str(it.getString(2)))
+        obj("accountId" to str(it.getString(1)), "displayName" to str(safeName(it.getString(2))))
     }.firstOrNull() ?: fail(404, "NOT_FOUND")
     fun accountForTelegram(c: Connection, sender: Long) = c.query("SELECT id FROM accounts WHERE telegram_id=?", sender) { it.getString(1) }.firstOrNull() ?: fail(401, "UNAUTHENTICATED")
 }

@@ -29,10 +29,12 @@ internal fun SharingEditor(state: ChronaUiState, target: SharingConsentTarget, d
                 LazyColumn(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     item {
                         Text("Выбранные привычки заменят прежний набор доступа. Пустой выбор отзовёт доступ. Друг увидит значения и точные интервалы за выбранный период.")
-                        Text("Друг: ${state.friends.friends.find { it.accountId == target.friendId }?.displayName ?: target.friendId}")
+                        Text("Друг: ${friendDisplayName(state.friends.friends.find { it.accountId == target.friendId })}")
                     }
-                    item { OutlinedTextField(from,{ from = it },singleLine=true,label={ Text("С даты включительно · YYYY-MM-DD") },modifier=Modifier.fillMaxWidth().testTag("sharing_from")) }
-                    item { OutlinedTextField(to,{ to = it },singleLine=true,label={ Text("До даты НЕ включительно · YYYY-MM-DD") },modifier=Modifier.fillMaxWidth().testTag("sharing_to")) }
+                    item { CalendarDateField("С даты включительно", parseDate(from), onSelect = { from = it.toString() },
+                        modifier = Modifier.fillMaxWidth().testTag("sharing_from"), initialMonth = parseDate(from) ?: state.today.date, enabled = current) }
+                    item { CalendarDateField("До даты (не включая)", parseDate(to), onSelect = { to = it.toString() },
+                        modifier = Modifier.fillMaxWidth().testTag("sharing_to"), initialMonth = parseDate(to) ?: parseDate(from) ?: state.today.date, enabled = current) }
                     item { OutlinedTextField(zone,{ zone = it },singleLine=true,label={ Text("Часовой пояс") },modifier=Modifier.fillMaxWidth().testTag("sharing_zone")) }
                     items(state.habits,key={ it.id }) { habit ->
                         Row(verticalAlignment=Alignment.CenterVertically) {

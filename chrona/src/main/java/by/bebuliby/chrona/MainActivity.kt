@@ -24,6 +24,9 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private lateinit var model: ChronaViewModel
+    private val updatePermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (::model.isInitialized) model.updatePermissionReturned()
+    }
     private val photoPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try {
@@ -47,6 +50,14 @@ class MainActivity : ComponentActivity() {
                         when (effect) {
                             ChronaEffect.OpenPhotoPicker -> photoPicker.launch(arrayOf("image/*"))
                             ChronaEffect.OpenAccessibilitySettings -> startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                            ChronaEffect.OpenUpdateInstallPermission -> updatePermission.launch(Intent(
+                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName")))
+                            is ChronaEffect.OpenUpdateInstaller -> {
+                                val uri = android.net.Uri.parse(effect.contentUri)
+                                require(uri.scheme == "content" && uri.authority == "$packageName.updates")
+                                startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                            }
                             is ChronaEffect.OpenTelegramLogin -> {
                                 val uri = android.net.Uri.parse(effect.telegramStartUrl)
                                 val request = WireCodec.uuid(uri.getQueryParameter("start").orEmpty())
@@ -58,6 +69,10 @@ class MainActivity : ComponentActivity() {
                         model.hostError("HOST_UNAVAILABLE", "Не удалось открыть системный экран.")
                     } catch (_: java.io.IOException) {
                         model.hostError("UNSAFE_LOGIN_URL", "Сервер вернул недопустимую ссылку входа.")
+                    } catch (_: SecurityException) {
+                        model.hostError("INSTALL_PERMISSION", "Android не разрешил открыть установщик. Данные не изменены.")
+                    } catch (_: IllegalArgumentException) {
+                        model.hostError("UNSAFE_INSTALL_URI", "Ссылка обновления не прошла проверку.")
                     }
                 }
             }
@@ -71,5 +86,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (::model.isInitialized) model.refreshHostStatus()
+    }
+    override fun onStart() {
+        super.onStart()
+        if (::model.isInitialized) model.hostStarted()
+    }
+    override fun onStop() {
+        if (::model.isInitialized) model.hostStopped()
+        super.onStop()
     }
 }

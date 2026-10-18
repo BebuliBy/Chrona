@@ -1,0 +1,6 @@
+{
+  "packageName": "REQUIRED_APPROVED_ANDROID_PACKAGE",
+  "signingCertificateSha256": "REQUIRED_PUBLIC_APK_CERTIFICATE_LOWERCASE_SHA256",
+  "minimumVersionCode": 1,
+  "maximumSizeBytes": 268435456
+}

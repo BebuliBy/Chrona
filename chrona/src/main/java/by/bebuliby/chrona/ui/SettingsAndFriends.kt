@@ -192,17 +192,17 @@ internal fun FriendsPage(state: ChronaUiState, dispatch: (ChronaAction) -> Unit)
         if (friends.status == FeatureStatus.NOT_CONNECTED) {
             Column(Modifier.padding(16.dp).testTag("friends_not_connected")) {
                 Text("Войдите, чтобы найти друзей")
-                TextButton(onClick = { dispatch(ChronaAction.OpenSettings) }) { Text("Открыть настройки") }
+                TextButton(onClick = { dispatch(ChronaAction.OpenAccountEntry) }) { Text("Войти") }
             }
         } else if (authorized != null) {
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(authorized.owner.displayName, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                Text(friendDisplayName(authorized.owner), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                 TextButton(onClick = { readCell = null; dispatch(ChronaAction.CloseFriend) }) { Text("Свернуть") }
             }
             Box(Modifier.weight(1f)) {
                 HistoryPage(authorized.habits, authorized.history, dispatch, readOnly = true, onOpenCell = { id, day ->
                     readCell = authorized.history.cells.find { it.habitId == id && it.day == day }
-                }, onSelectHistory = { _, range -> dispatch(ChronaAction.OpenFriend(authorized.owner.accountId, range)) },
+                }, onSelectHistory = { period, range -> dispatch(ChronaAction.OpenFriend(authorized.owner.accountId, range, period)) },
                     today = state.today.date, selectedDate = state.selectedDay.date)
             }
         } else {
@@ -212,11 +212,11 @@ internal fun FriendsPage(state: ChronaUiState, dispatch: (ChronaAction) -> Unit)
                 if (friends.friends.isEmpty()) item { InfoCard("Пока нет друзей") }
                 items(friends.friends, key = { it.accountId }) { friend ->
                     FriendRow(friend, state.busy, state.profile.telegramLinked && state.mode == DataMode.CONNECTED, dispatch,
-                        onShare = { sharingFor = sharingConsentTarget(state,friend.accountId) }) { dispatch(ChronaAction.OpenFriend(friend.accountId, state.history.range)) }
+                        onShare = { sharingFor = sharingConsentTarget(state,friend.accountId) }) { dispatch(ChronaAction.OpenFriend(friend.accountId, state.history.range, state.history.period)) }
                 }
                 if (searching && friends.searchResults.isNotEmpty()) item { Text("Результаты поиска", style = MaterialTheme.typography.titleMedium) }
                 if (searching) items(friends.searchResults, key = { "search_${it.accountId}" }) { friend ->
-                    FriendRow(friend, state.busy, state.profile.telegramLinked && state.mode == DataMode.CONNECTED, dispatch) { dispatch(ChronaAction.OpenFriend(friend.accountId, state.history.range)) }
+                    FriendRow(friend, state.busy, state.profile.telegramLinked && state.mode == DataMode.CONNECTED, dispatch) { dispatch(ChronaAction.OpenFriend(friend.accountId, state.history.range, state.history.period)) }
                 }
             }
         }
@@ -234,8 +234,8 @@ private fun FriendRow(friend: FriendSummary, busy: Boolean, remotePhotosEnabled:
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 // A remote friend's local content URI is never opened.
-                ProfileAvatar(friend.displayName, friend.photo?.takeIf { it.kind == PhotoKind.TELEGRAM_URL }, remotePhotosEnabled)
-                Text(friend.displayName, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                ProfileAvatar(friendDisplayName(friend), friend.photo?.takeIf { it.kind == PhotoKind.TELEGRAM_URL }, remotePhotosEnabled)
+                Text(friendDisplayName(friend), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             }
             when (friend.relation) {
                 FriendRelation.ACCEPTED -> {
@@ -263,7 +263,7 @@ private fun FriendDayDialog(view: FriendActivityUiState, habit: Habit, cell: Day
         Surface(shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().fillMaxHeight(.9f)) {
             LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item { TextButton(onClick = onDismiss) { Text("Закрыть") } }
-                item { Text("${view.owner.displayName} · ${dateFormat.format(cell.day.date)}", style = MaterialTheme.typography.titleMedium) }
+                item { Text("${friendDisplayName(view.owner)} · ${dateFormat.format(cell.day.date)}", style = MaterialTheme.typography.titleMedium) }
                 item { HabitTile(habit, cell, onClick = {}) }
                 item { IntervalTimeline(
                     view.intervals.filter { it.habitId == habit.id && it.startUtc < end && it.endUtc > start }, cell.day.zoneId, cell.day.date,

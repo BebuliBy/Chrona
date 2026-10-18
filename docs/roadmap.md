@@ -1,5 +1,10 @@
 # План и фактическое состояние
 
+**Latest continuation2026-10-19:**0.4.0-update/code6 compiled/published permanentAPK
+и manifest, API namesdeployed. Mandatorygate/welcome/calendar/3snotices/friendperiod/
+cadence5s/10min source реализован; phone install/actual mandatoryflow ещё ожидаются,
+не перепутать server publish с установленным APK. [Релиз](release-0.4.0-2026-10-19.md).
+
 **Последний этап:** UX/автосинхронизация/накопленные Shorts/жёлтые лица реализованы,
 code4/0.3.2-ux установлен install-r/launchPASS. User отменил дополнительные тесты,
 финально только assemble. Исторические one-shot/partial-blocking ниже не актуальны;

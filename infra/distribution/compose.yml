@@ -1,0 +1,43 @@
+name: chrona-distribution
+services:
+  publisher:
+    image: ${DISTRIBUTION_IMAGE:?reviewed locally built immutable image required}
+    pull_policy: never
+    platform: linux/amd64
+    user: "10002:10002"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    mem_limit: 192m
+    cpus: 0.25
+    pids_limit: 32
+    environment:
+      PHP_CLI_SERVER_WORKERS: "2"
+    ports:
+      - "127.0.0.1:${DISTRIBUTION_PORT:-18081}:8080"
+    volumes:
+      - type: bind
+        source: /srv/chrona-distribution/published
+        target: /published
+        read_only: true
+        bind: {create_host_path: false}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m,uid=10002,gid=10002
+      # Parent image VOLUME must not create an unrelated anonymous app volume.
+      - /var/www/html:ro,noexec,nosuid,size=1m
+    networks: [ingress]
+    healthcheck:
+      test: [CMD, /usr/local/bin/php, -r, "exit(is_file('/published/latest.json') ? 0 : 1);"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    logging:
+      # PHP built-in access stderr includes raw request URI/peer metadata.
+      # Do not retain it; monitor sanitized readiness/status instead.
+      driver: none
+networks:
+  ingress:
+    name: chrona-distribution-ingress
+    driver_opts:
+      com.docker.network.bridge.host_binding_ipv4: 127.0.0.1

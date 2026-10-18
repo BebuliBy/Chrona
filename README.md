@@ -4,6 +4,18 @@ Android/Kotlin-трекер привычек: автоматический Short
 
 ## Статус на 2026-10-18
 
+**Релиз0.4.0-update/code6 опубликован (продолжение2026-10-19).** Постоянный путь
+`/updates/chrona/latest.apk`, manifest `latest.json` и immutable releases доступны
+через отдельный gateway consumer; полное значение ссылки передаётся владельцу,
+не хардкодится в Git. В приложении проверка при каждом открытии и обязательный
+update gate, единый Telegram/guest welcome, календари дат, notices3s, исправленный
+friend week/month и имена заявок. Sync сразу при открытии/target5s, background
+one-time chain target10min (Android best effort). API name-fix тоже deployed,
+worker/DB/Nextcloud сохранены. App/backend сборки PASS, tests/lint не запускались.
+**На телефон владельца code6 пока не установлен**, ожидается новое подтверждение
+готовности; старые code4/5 не имеют updater и один раз обновляются по ссылке.
+[Релиз и ограничения](docs/release-0.4.0-2026-10-19.md).
+
 **Подготовлено обновление0.3.3-sync/code5:** сетевые ошибки/VPN-switch больше не
 очищают вход как обычный logout, сохранена last-known identity; active loop≈10s,
 signals5s/immutable Shorts slices5s, headless Application/Accessibility controller,

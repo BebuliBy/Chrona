@@ -1,5 +1,17 @@
 # Журнал решений
 
+## DEC-022 — mandatory updater, welcome и точный foreground/background contract
+
+2026-10-18/19, прямой запрос и подтверждение server плана. Stable APK/manifest
+через отдельный consumer `/updates/chrona/` на existing gateway, не private443.
+Verified newer release блокирует только ordinary UI, не фон; OS installer требует
+подтверждения, старые updater-less clients однократно обновляются вручную.
+Foreground sync immediately/target5s, background one-time chain target10min без
+fake periodic10min/SLA/force-stop обхода. Persistent Telegram/guest welcome,
+name/@username pending requests,3s notices, calendar pickers и friendperiod fix.
+APK/API updates отдельны, signing keys не на сервер; same signer/monotonic version/
+manifest-last. [Факт/границы](release-0.4.0-2026-10-19.md).
+
 ## DEC-021 — тихий UI, автосинхронизация и накопленный счётчик
 
 2026-10-18, **прямое решение владельца**. Убрать служебные пояснения/gaps/editor

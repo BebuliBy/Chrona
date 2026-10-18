@@ -29,6 +29,9 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
     private var selectedHabit: Pair<String, DayKey>? = null
     private var initialized = false
     private var clientNoticeId: String? = null
+    private var accountEntryExplicit = false
+    private var lastLoginCompleted = false
+    private var clientInitialized = false
 
     init {
         viewModelScope.launch {
@@ -38,6 +41,8 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
                 combine(container.repository.facts, container.settings.snapshots, container.client.state) { f, s, c -> Triple(f, s, c) }
                     .collect { (f, s, c) ->
                         facts = f; settings = s
+                        if (c.loginCompleted && !lastLoginCompleted) accountEntryExplicit = false
+                        lastLoginCompleted = c.loginCompleted
                         c.notice?.let { notice -> if (clientNoticeId != notice.id) {
                             clientNoticeId = notice.id; mutable.update { it.copy(notice = notice) }
                         } }
@@ -46,6 +51,12 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { fail("STORAGE_ERROR", "Не удалось открыть локальное хранилище. Данные не сбрасывались.") }
         }
+        viewModelScope.launch {
+            container.clientReady.await()
+            clientInitialized = true
+            render()
+        }
+        viewModelScope.launch { container.updater.state.collect { update -> mutable.update { it.copy(update = update) } } }
         viewModelScope.launch {
             for (action in commands) {
                 try { handle(action) }
@@ -67,9 +78,27 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
             dispatch(ChronaAction.RefreshLoginStatus)
     }
     fun hostError(code: String, message: String) { fail(code, message) }
+    fun hostStarted() {
+        container.client.setUiForeground(true)
+        viewModelScope.launch { container.updater.check() }
+    }
+    fun hostStopped() { container.client.setUiForeground(false) }
+    fun updatePermissionReturned() {
+        viewModelScope.launch { container.updater.permissionReturned()?.let { effectChannel.send(it) } }
+    }
 
     private suspend fun handle(action: ChronaAction) {
         when (action) {
+            ChronaAction.CheckForUpdates -> viewModelScope.launch { container.updater.check() }
+            ChronaAction.InstallUpdate -> viewModelScope.launch {
+                container.updater.install()?.let { effectChannel.send(it) }
+            }
+            ChronaAction.OpenAccountEntry -> accountEntryExplicit = true
+            ChronaAction.ContinueWithoutAccount -> clientAction {
+                container.client.continueWithoutAccount()
+                accountEntryExplicit = false
+                render()
+            }
             is ChronaAction.Navigate -> {
                 mutable.update { it.copy(tab = action.tab) }
                 if (action.tab == MainTab.FRIENDS) clientAction { container.client.refreshFriends() }
@@ -140,7 +169,7 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
             is ChronaAction.SearchFriends -> clientAction { container.client.search(action.query) }
             is ChronaAction.RequestFriend -> clientAction { container.client.requestFriend(action.accountId) }
             is ChronaAction.RespondToFriendRequest -> clientAction { container.client.respond(action.requestId, action.accept) }
-            is ChronaAction.OpenFriend -> clientAction { container.client.openFriend(action.accountId, action.range, mutable.value.history.period) }
+            is ChronaAction.OpenFriend -> clientAction { container.client.openFriend(action.accountId, action.range, action.period) }
             is ChronaAction.SaveSharing -> clientAction { container.client.sharing(action.grant) }
         }
         render()
@@ -170,7 +199,7 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
         val s = settings ?: return
         val old = mutable.value
         val client = container.client.state.value
-        val remote = client.profile
+        val remote = client.profile.takeUnless { s.guestMode }
         val cells = LocalReadModels.cells(old.history.range, facts, s.deviceId)
         val selected = selectedHabit?.let { (id, day) -> facts.habits.find { it.id == id }?.let { habit ->
             HabitDetailsUiState(id, LocalReadModels.cell(habit, day, facts, s.deviceId),
@@ -192,7 +221,9 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
             todayCells = facts.habits.filter { h -> h.archivedAt == null }.map { h -> LocalReadModels.cell(h, old.selectedDay, facts, s.deviceId) },
             history = old.history.copy(cells = cells, summary = Scoring.summary(facts.habits, cells)),
             details = selected, tracker = health, sync = SyncState(client.syncStatus, client.lastSuccessAt, facts.pending, client.automaticEnabled),
-            friends = client.friends, connection = ConnectionUiState(client.baseUrl, client.loginPending,remote?.discoverable ?: false),
+            friends = if (s.guestMode) FriendsUiState(FeatureStatus.NOT_CONNECTED) else client.friends,
+            connection = ConnectionUiState(client.baseUrl, client.loginPending,remote?.discoverable ?: false),
+            showAccountEntry = accountEntryExplicit || (clientInitialized && !s.guestMode && client.requiresLogin),
         ) }
     }
 

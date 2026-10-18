@@ -70,15 +70,9 @@ internal fun HabitTile(
 
 @Composable
 internal fun DaySelector(day: DayKey, today: LocalDate? = null, onSelect: (DayKey) -> Unit) {
-    var text by rememberSaveable(day.date.toString(), day.zoneId) { mutableStateOf(day.date.toString()) }
-    val date = parseDate(text)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(text, { text = it }, label = { Text("Дата") }, singleLine = true,
-                isError = date == null, modifier = Modifier.weight(1f).testTag("day_input"))
-            TextButton(onClick = { date?.let { onSelect(DayKey(it, day.zoneId)) } }, enabled = date != null,
-                modifier = Modifier.testTag("select_day")) { Text("Открыть") }
-        }
+        CalendarDateField("Дата", day.date, onSelect = { onSelect(DayKey(it, day.zoneId)) },
+            modifier = Modifier.fillMaxWidth().testTag("day_input"))
         if (today != null) OutlinedButton(onClick = { onSelect(DayKey(today, day.zoneId)) },
             border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary), modifier = Modifier.testTag("today_marker_$today")
                 .semantics { selected = day.date == today; contentDescription = "Сегодня, ${dateFormat.format(today)}" }) {

@@ -8,6 +8,7 @@ import by.bebuliby.chrona.data.client.*
 import by.bebuliby.chrona.BuildConfig
 import by.bebuliby.chrona.data.sync.AutomaticSyncScheduler
 import by.bebuliby.chrona.data.sync.DefaultNetworkObserver
+import by.bebuliby.chrona.data.update.ApkUpdater
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.collect
@@ -28,6 +29,9 @@ class ChronaContainer(application: Application) {
     val ready = scope.async { settings.initialize(); repository.initialize() }
     private val syncStore = ClientSyncStore(database)
     private val automaticScheduler = AutomaticSyncScheduler(application)
+    val updater = ApkUpdater(application, BuildConfig.CHRONA_API_BASE_URL)
+    fun scheduleBackgroundSync() = automaticScheduler.enqueue()
+    fun scheduleNextBackgroundSync() = automaticScheduler.next()
     private val transport = HttpsTransport()
     val client = AndroidClient(SessionClient(transport, KeystoreSessionVault(application), syncStore::bind),
         syncStore, settings, scope, automaticScheduler::enqueue, automaticScheduler::cancelPending)

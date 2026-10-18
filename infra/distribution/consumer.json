@@ -1,0 +1,6 @@
+{
+  "id": "chrona-updates",
+  "prefix": "/updates/chrona/",
+  "upstream": "http://localhost:18081",
+  "delegates": []
+}

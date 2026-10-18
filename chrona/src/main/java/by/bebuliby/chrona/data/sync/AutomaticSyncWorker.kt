@@ -3,7 +3,6 @@ package by.bebuliby.chrona.data.sync
 import android.content.Context
 import androidx.work.*
 import by.bebuliby.chrona.data.ChronaApplication
-import by.bebuliby.chrona.data.client.ClientFailure
 import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
 
@@ -11,16 +10,26 @@ import java.util.concurrent.TimeUnit
 class AutomaticSyncWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result {
         val container = (applicationContext as? ChronaApplication)?.container ?: return Result.failure()
+        if (inputData.getBoolean("fallback", false)) {
+            container.clientReady.await()
+            if (!container.client.isUiForeground() && container.client.backgroundEnabled()) container.scheduleBackgroundSync()
+            return Result.success()
+        }
         return try {
             container.clientReady.await()
-            if (container.client.runBackgroundCycle()) Result.retry() else Result.success()
+            container.client.runBackgroundCycle()
+            Result.success()
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
             container.client.backgroundFailure(error)
             // Work success here only means no automatic retry; it is NOT a data ACK/sync success.
-            if (error is ClientFailure && error.code in setOf("LOGIN_REQUIRED", "ACCOUNT_BINDING_CONFLICT",
-                    "AUTOMATIC_SYNC_DISABLED", "SERVER_NOT_CONFIGURED", "BOOTSTRAP_EXISTING_BINDING", "SESSION_REFRESH_UNCERTAIN"))
-                Result.success() else Result.retry()
+            Result.success()
+        } finally {
+            // Append AFTER the running unique work; KEEP here would silently lose the next tick.
+            // A foreground tick does no IO but retains the chain: onStop racing this completion
+            // must not lose a KEEP request just after the foreground check.
+            if (!isStopped && container.client.backgroundEnabled())
+                container.scheduleNextBackgroundSync()
         }
     }
 }
@@ -31,12 +40,18 @@ class AutomaticSyncScheduler(context: Context) {
     fun enqueue() {
         WorkManager.getInstance(app).enqueueUniqueWork(ON_DEMAND, ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<AutomaticSyncWorker>().setConstraints(constraints())
-                .setInitialDelay(10, TimeUnit.SECONDS)
+                .setInitialDelay(10, TimeUnit.MINUTES)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
     }
+    fun next() {
+        WorkManager.getInstance(app).enqueueUniqueWork(ON_DEMAND, ExistingWorkPolicy.APPEND_OR_REPLACE,
+            OneTimeWorkRequestBuilder<AutomaticSyncWorker>().setConstraints(constraints())
+                .setInitialDelay(10, TimeUnit.MINUTES).build())
+    }
     fun periodic() {
-        WorkManager.getInstance(app).enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.KEEP,
+        WorkManager.getInstance(app).enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.UPDATE,
             PeriodicWorkRequestBuilder<AutomaticSyncWorker>(15, TimeUnit.MINUTES).setConstraints(constraints())
+                .setInputData(workDataOf("fallback" to true))
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
     }
     fun cancelPending() { WorkManager.getInstance(app).cancelUniqueWork(ON_DEMAND) }

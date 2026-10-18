@@ -48,8 +48,8 @@ android {
         applicationId = "by.bebuliby.chrona"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.3.3-sync"
+        versionCode = 6
+        versionName = "0.4.0-update"
         // Strict policy accepts only ASCII URL characters safe in this Java String literal.
         buildConfigField("String", "CHRONA_API_BASE_URL", "\"$bootstrapBaseUrl\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

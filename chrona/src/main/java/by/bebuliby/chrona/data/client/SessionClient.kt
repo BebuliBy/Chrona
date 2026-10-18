@@ -14,7 +14,8 @@ import kotlinx.coroutines.CancellationException
 data class RemoteProfile(val accountId: String, val displayName: String, val telegramLinked: Boolean, val discoverable: Boolean = false) {
     override fun toString() = "RemoteProfile(redacted)"
 }
-data class AuthView(val origin: String = "", val loginPending: Boolean = false, val profile: RemoteProfile? = null)
+data class AuthView(val origin: String = "", val loginPending: Boolean = false, val profile: RemoteProfile? = null,
+                    val requiresLogin: Boolean = true, val loginRevision: Long = 0)
 internal enum class BootstrapOutcome { NOT_SUPPLIED, APPLIED, PRESERVED, BLOCKED_EXISTING_BINDING }
 
 /** All token use/rotation/config changes serialized. Never sends a credential across origins. */
@@ -32,7 +33,8 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
             connection.cachedProfile ?: RemoteProfile(s.accountId, "Профиль", true)
         }
         // Last confirmed local identity is not a claim of a fresh /me. Network loss must not look like logout.
-        mutable.value = AuthView(connection.origin, connection.pending != null, retained)
+        mutable.value = AuthView(connection.origin, connection.pending != null, retained,
+            connection.session == null || connection.session?.rotating == true)
         if (connection.session?.rotating == true) throw ClientFailure("SESSION_REFRESH_UNCERTAIN")
         // Lost exchange cannot be replayed, but must never discard an existing independent session.
         if (connection.pending?.exchanging == true) {
@@ -40,7 +42,7 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
             throw ClientFailure("LOGIN_RESPONSE_LOST")
         }
     }
-    private suspend fun persist(value: PrivateConnection) {
+    private suspend fun persist(value: PrivateConnection, refreshInFlight: Boolean = false) {
         val same = value.origin == connection.origin && value.session?.accountId == connection.session?.accountId
         val cached = if (value.session == null) null else value.cachedProfile ?: if (same)
             mutable.value.profile ?: connection.cachedProfile ?: RemoteProfile(value.session.accountId, "Профиль", true)
@@ -48,7 +50,7 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
         val record = PrivateConnection(value.origin, value.session, value.pending, cached)
         vault.save(record); connection = record
         mutable.value = mutable.value.copy(origin = record.origin, loginPending = record.pending != null,
-            profile = cached)
+            profile = cached, requiresLogin = record.session == null || (record.session?.rotating == true && !refreshInFlight))
     }
     suspend fun configure(raw: String): Boolean = mutex.withLock {
         val origin = ServerOrigin.parse(raw)
@@ -104,6 +106,7 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
                             throw error
                         }
                         persist(PrivateConnection(connection.origin, session))
+                        mutable.value = mutable.value.copy(loginRevision = mutable.value.loginRevision + 1)
                         // Keep last confirmed local identity if /me is temporarily unreachable.
                     } catch (error: Exception) {
                         persist(PrivateConnection(connection.origin, connection.session)); throw error
@@ -175,13 +178,16 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
     private suspend fun rotate(old: ClientSession): ClientSession {
         if (old.rotating) throw ClientFailure("SESSION_REFRESH_UNCERTAIN")
         persist(PrivateConnection(connection.origin, ClientSession(old.accountId, old.sessionId, old.access,
-            old.refresh, old.expiresAt, true), connection.pending))
+            old.refresh, old.expiresAt, true), connection.pending), refreshInFlight = true)
         try {
             val result = send(connection.origin, "POST", "/v1/auth/refresh", JSONObject().put("refreshToken", old.refresh).toString())
             val fresh = session(result)
             if (fresh.accountId != old.accountId || fresh.sessionId != old.sessionId) throw ClientFailure("ACCOUNT_BINDING_CONFLICT")
             persist(PrivateConnection(connection.origin, fresh, connection.pending)); return fresh
-        } catch (cancelled: CancellationException) { throw cancelled } // durable rotating marker retained
+        } catch (cancelled: CancellationException) {
+            mutable.value = mutable.value.copy(requiresLogin = true)
+            throw cancelled // durable rotating marker retained
+        }
         catch (failure: ClientFailure) {
             if (failure.httpStatus == 401 && failure.code == "UNAUTHENTICATED") {
                 persist(PrivateConnection(connection.origin)); throw ClientFailure("LOGIN_REQUIRED", 401)
@@ -192,8 +198,10 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
                 throw failure
             }
             // MAY have rotated: preserve encrypted state, prohibit reuse. Recovery needs a server contract.
+            mutable.value = mutable.value.copy(requiresLogin = true)
             throw ClientFailure("SESSION_REFRESH_UNCERTAIN")
         } catch (_: Exception) {
+            mutable.value = mutable.value.copy(requiresLogin = true)
             throw ClientFailure("SESSION_REFRESH_UNCERTAIN")
         }
     }

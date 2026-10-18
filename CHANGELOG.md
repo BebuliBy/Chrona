@@ -1,5 +1,17 @@
 # История изменений
 
+## 2026-10-19 — опубликована0.4.0-update
+
+- Stable APK/manifest/immutable releases на отдельном public gateway consumer.
+  Publisher readonly/nonroot, manifest atomicLAST, same signer/version/hash checks;
+  existing private443/Nextcloud/rootAPI сохранены. API pending names deployed отдельно.
+- Every-open update check/non-dismissable gate, independent background collector/
+  sync, verified APK/systeminstaller; unified Telegram/guest welcome по reference.
+- Sync immediate/5s foreground, one-time target10min background; names/username
+  pending безUUID, calendar dates, notices3s, explicit friendperiod/font restoration.
+- Root assembleDebug55s/backendinstallDist16s PASS, no unit/lint/instrumentation.
+  Phone6 ещё не установлен, запрошен unlocked. [Факт](docs/release-0.4.0-2026-10-19.md).
+
 ## 2026-10-18 — подготовлена0.3.3-sync
 
 - Сохранение session/last-known profile при обычной потере сети; ambiguous refresh

@@ -1,0 +1,7 @@
+__pycache__/
+*.apk
+*.env
+!*.env.example
+*.private.json
+staging/
+published/

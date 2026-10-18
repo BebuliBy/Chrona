@@ -62,9 +62,15 @@ data class ChronaUiState(
     val notice: UiNotice? = null,
     val valueCommit: ValueCommit? = null,
     val connection: ConnectionUiState = ConnectionUiState(),
+    val update: UpdateUiState = UpdateUiState(),
+    val showAccountEntry: Boolean = false,
 )
 
 sealed interface ChronaAction {
+    data object CheckForUpdates : ChronaAction
+    data object InstallUpdate : ChronaAction
+    data object OpenAccountEntry : ChronaAction
+    data object ContinueWithoutAccount : ChronaAction
     data class ConfigureServer(val baseUrl: String) : ChronaAction
     data class ConfigureDiscoverability(val enabled: Boolean) : ChronaAction
     data class Navigate(val tab: MainTab) : ChronaAction
@@ -100,7 +106,7 @@ sealed interface ChronaAction {
     data class SearchFriends(val query: String) : ChronaAction
     data class RequestFriend(val accountId: String) : ChronaAction
     data class RespondToFriendRequest(val requestId: String, val accept: Boolean) : ChronaAction
-    data class OpenFriend(val accountId: String, val range: DayRange) : ChronaAction
+    data class OpenFriend(val accountId: String, val range: DayRange, val period: HistoryPeriod? = null) : ChronaAction
     data object CloseFriend : ChronaAction
     data class SaveSharing(val grant: SharingGrantDraft) : ChronaAction
 
@@ -113,6 +119,8 @@ sealed interface ChronaEffect {
     data object OpenPhotoPicker : ChronaEffect
     data object OpenAccessibilitySettings : ChronaEffect
     data class OpenTelegramLogin(val telegramStartUrl: String) : ChronaEffect
+    data object OpenUpdateInstallPermission : ChronaEffect
+    data class OpenUpdateInstaller(val contentUri: String) : ChronaEffect
 }
 
 /** Implemented by core's presentation/ChronaViewModel, not by UI or preview models. */

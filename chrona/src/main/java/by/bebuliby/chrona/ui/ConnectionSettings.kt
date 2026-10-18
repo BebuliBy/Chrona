@@ -27,8 +27,8 @@ internal fun ConnectionSettings(state: ChronaUiState, dispatch: (ChronaAction) -
                 OutlinedButton(enabled = !state.busy, onClick = { dispatch(ChronaAction.Logout) }, modifier = Modifier.testTag("logout")) { Text("Выйти из аккаунта") }
             } else {
                 if (!configured) Text("Вход временно недоступен", style = MaterialTheme.typography.bodySmall)
-                Button(enabled = configured && !state.busy && !state.connection.loginPending,
-                    onClick = { dispatch(ChronaAction.BeginTelegramLogin) }, modifier = Modifier.testTag("telegram_login")) { Text("Войти через Telegram") }
+                Button(enabled = !state.busy,
+                    onClick = { dispatch(ChronaAction.OpenAccountEntry) }, modifier = Modifier.testTag("telegram_login")) { Text("Войти через Telegram") }
             }
         }
     }
@@ -63,6 +63,10 @@ internal fun ManualSyncSettings(state: ChronaUiState, dispatch: (ChronaAction) -
             }
             OutlinedButton(enabled = canRequestManualSync(state), onClick = { dispatch(ChronaAction.RequestSync) },
                 modifier = Modifier.testTag("request_sync")) { Text("Синхронизировать сейчас") }
+            TextButton(enabled = !state.update.checking && !state.update.downloading,
+                onClick = { dispatch(ChronaAction.CheckForUpdates) }, modifier = Modifier.testTag("check_updates")) {
+                Text(if (state.update.checking) "Проверяем обновление…" else "Проверить обновления")
+            }
         }
     }
 }

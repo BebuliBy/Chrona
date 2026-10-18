@@ -24,6 +24,7 @@ data class LocalSettingsSnapshot(
     val preferences: AppPreferences,
     val photoUri: String?,
     val trackingEnabled: Boolean,
+    val guestMode: Boolean = false,
 )
 
 class LocalSettings(context: Context) : AutomaticSyncPreferences {
@@ -35,6 +36,7 @@ class LocalSettings(context: Context) : AutomaticSyncPreferences {
     private val style = stringPreferencesKey("style")
     private val photo = stringPreferencesKey("local_photo_uri")
     private val consent = booleanPreferencesKey("tracking_enabled")
+    private val guest = booleanPreferencesKey("guest_mode")
 
     suspend fun initialize() {
         store.edit {
@@ -47,7 +49,7 @@ class LocalSettings(context: Context) : AutomaticSyncPreferences {
         LocalSettingsSnapshot(it[profile].orEmpty(), it[device].orEmpty(),
             AppPreferences(runCatching { ThemeMode.valueOf(it[theme].orEmpty()) }.getOrDefault(ThemeMode.SYSTEM),
                 it[palette] ?: "ocean", it[style] ?: "standard"),
-            it[photo], it[consent] ?: false)
+            it[photo], it[consent] ?: false, it[guest] ?: false)
     }
 
     suspend fun preferences(value: AppPreferences) {
@@ -56,6 +58,7 @@ class LocalSettings(context: Context) : AutomaticSyncPreferences {
     }
     suspend fun photo(uri: String) { store.edit { it[photo] = uri } }
     suspend fun tracking(enabled: Boolean) { store.edit { it[consent] = enabled } }
+    suspend fun guestMode(enabled: Boolean) { store.edit { it[guest] = enabled } }
     private fun automaticKey(origin: String, accountId: String) = booleanPreferencesKey("automatic_sync_v1_" +
         MessageDigest.getInstance("SHA-256").digest("$origin\u0000$accountId".toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 255) })

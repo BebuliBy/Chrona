@@ -24,6 +24,10 @@ internal fun parseDayNumber(text: String): BigDecimal? {
 }
 
 internal fun parseDate(text: String): LocalDate? = runCatching { LocalDate.parse(text.trim()) }.getOrNull()
+internal fun friendDisplayName(friend: FriendSummary?): String {
+    if (friend == null) return "Пользователь"
+    return friend.displayName.trim().takeIf { it.isNotBlank() && it != friend.accountId && it != friend.requestId } ?: "Пользователь"
+}
 internal fun BigDecimal.number(): String = stripTrailingZeros().toPlainString().replace('.', ',')
 internal fun percent(value: BigDecimal): String = "${value.setScale(1, RoundingMode.HALF_UP).number()}%"
 /** Display only: truncate subsecond remainder, but never turn a nonzero duration into 0 seconds. */

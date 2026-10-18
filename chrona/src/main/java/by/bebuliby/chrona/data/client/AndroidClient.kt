@@ -10,6 +10,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.channels.Channel
 import org.json.JSONObject
 import java.time.Instant
 import java.util.UUID
@@ -17,27 +18,35 @@ import java.util.UUID
 data class ClientView(val baseUrl: String = "", val loginPending: Boolean = false,
     val profile: RemoteProfile? = null, val syncStatus: SyncStatus = SyncStatus.LOCAL_ONLY,
     val lastSuccessAt: Instant? = null, val friends: FriendsUiState = FriendsUiState(FeatureStatus.NOT_CONNECTED),
-    val notice: UiNotice? = null, val automaticEnabled: Boolean = true)
+    val notice: UiNotice? = null, val automaticEnabled: Boolean = true,
+    val requiresLogin: Boolean = true, val loginCompleted: Boolean = false)
 
 class AndroidClient internal constructor(val auth: SessionClient, private val store: ClientSyncStore,
                     private val identities: Flow<LocalSettingsSnapshot>, private val scope: CoroutineScope,
                     private val automaticPreferences: AutomaticSyncPreferences = MemoryAutomaticSyncPreferences(),
-                    private val scheduleBackground: () -> Unit = {}, private val cancelBackground: () -> Unit = {}) {
+                    private val scheduleBackground: () -> Unit = {}, private val cancelBackground: () -> Unit = {},
+                    private val saveGuestChoice: suspend (Boolean) -> Unit = {}) {
     constructor(auth: SessionClient, store: ClientSyncStore, settings: LocalSettings, scope: CoroutineScope,
                 scheduleBackground: () -> Unit = {}, cancelBackground: () -> Unit = {}) :
-        this(auth, store, settings.snapshots, scope, settings, scheduleBackground, cancelBackground)
+        this(auth, store, settings.snapshots, scope, settings, scheduleBackground, cancelBackground, settings::guestMode)
     private val mutable = MutableStateFlow(ClientView())
     val state = mutable.asStateFlow()
     private val syncMutex = Mutex()
-    @Volatile private var backoff = 10_000L
+    @Volatile private var backoff = 5_000L
     @Volatile private var retryNotBeforeNanos = 0L
     @Volatile private var initialized = false
     private var automaticSignal: Job? = null
     private var lastAutomaticError: String? = null
+    @Volatile private var uiForeground = false
+    @Volatile private var nextForegroundCycleNanos = 0L
+    private val foregroundWake = Channel<Unit>(Channel.CONFLATED)
+    private var backgroundRequested = false
+    @Volatile private var accountLoginRequested = false
+    private val accountChoiceGeneration = java.util.concurrent.atomic.AtomicLong()
 
     suspend fun initialize(bootstrapBaseUrl: String = "") {
         scope.launch { auth.state.collect { a -> mutable.update { it.copy(baseUrl = a.origin,
-            loginPending = a.loginPending, profile = a.profile,
+            loginPending = a.loginPending, profile = a.profile, requiresLogin = a.requiresLogin,
             friends = if (a.profile == null) FriendsUiState(FeatureStatus.NOT_CONNECTED) else it.friends) }
             if (a.profile != null) {
                 try { updateMeta(); signalAutomaticSync() }
@@ -49,42 +58,71 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
             auth.initialize()
             if (auth.bootstrap(bootstrapBaseUrl, store::canBootstrapUnconfiguredProfile) == BootstrapOutcome.BLOCKED_EXISTING_BINDING)
                 throw ClientFailure("BOOTSTRAP_EXISTING_BINDING")
-            if (auth.hasSession()) auth.me()
-            else if (auth.state.value.loginPending) auth.refreshLogin()
+            if (!identities.first().guestMode) {
+                if (auth.hasSession()) auth.me()
+                else if (auth.state.value.loginPending) auth.refreshLogin()
+            }
             updateMeta()
         } catch (error: Exception) { automaticFailure(error) }
         initialized = true
         signalAutomaticSync()
         scope.launch {
             while (isActive) {
-                delay(backoff)
+                if (!uiForeground) { foregroundWake.receive(); continue }
+                val waitNanos = nextForegroundCycleNanos - System.nanoTime()
+                if (nextForegroundCycleNanos != 0L && waitNanos > 0L) {
+                    withTimeoutOrNull((waitNanos / 1_000_000).coerceAtLeast(1)) { foregroundWake.receive() }
+                    continue
+                }
                 try {
-                    if (auth.hasSession()) {
+                    if (!identities.first().guestMode && auth.hasSession()) {
                         retrySocial()
                         runAutomaticCycle()
                         refreshSelectedFriend()
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) { automaticFailure(error) }
+                nextForegroundCycleNanos = System.nanoTime() + backoff * 1_000_000
             }
         }
     }
     suspend fun configure(url: String) {
         ManagedServerConfiguration.rejectUserEdit()
     }
-    suspend fun beginLogin(): String = auth.begin(identities.first { it.deviceId.isNotEmpty() }.deviceId)
-    suspend fun refreshLogin() {
-        auth.refreshLogin()
+    suspend fun beginLogin(): String {
+        accountChoiceGeneration.incrementAndGet()
+        accountLoginRequested = true
+        mutable.update { it.copy(loginCompleted = false) }
+        return auth.begin(identities.first { it.deviceId.isNotEmpty() }.deviceId)
+    }
+    suspend fun refreshLogin(allowGuestLogin: Boolean = false) {
+        val choiceGeneration = accountChoiceGeneration.get()
+        if (identities.first().guestMode && !accountLoginRequested && !allowGuestLogin) return
+        val loginRevision = auth.state.value.loginRevision
+        try { auth.refreshLogin() }
+        finally {
+            // The exchange may succeed even if its subsequent /me is offline. An expired/cancelled
+            // challenge over an older valid session is NOT a completed new login.
+            if (choiceGeneration == accountChoiceGeneration.get() && auth.state.value.loginRevision != loginRevision) {
+                saveGuestChoice(false); accountLoginRequested = false
+                mutable.update { it.copy(loginCompleted = true) }
+                signalAutomaticSync()
+            }
+        }
+        if (choiceGeneration != accountChoiceGeneration.get()) return
         signalAutomaticSync()
         if (auth.state.value.profile != null) refreshFriends()
         updateMeta()
     }
     suspend fun logout() {
+        accountChoiceGeneration.incrementAndGet()
+        saveGuestChoice(false); accountLoginRequested = false
         cancelBackground()
         store.pauseConsent()
         try { auth.logout() } finally { mutable.update { ClientView(baseUrl = auth.state.value.origin) } }
     }
     suspend fun requestSync() {
+        if (identities.first().guestMode) throw ClientFailure("LOGIN_REQUIRED")
         if (!auth.hasSession()) throw ClientFailure("LOGIN_REQUIRED")
         val meta = store.meta() ?: throw ClientFailure("LOGIN_REQUIRED")
         if (!automaticPreferences.automaticEnabled(meta.origin, meta.accountId)) throw ClientFailure("AUTOMATIC_SYNC_DISABLED")
@@ -100,31 +138,36 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         if (!enabled) {
             automaticSignal?.cancel(); cancelBackground(); store.pauseConsent()
             mutable.update { it.copy(syncStatus = SyncStatus.LOCAL_ONLY) }
-        } else signalAutomaticSync()
+        } else { backgroundRequested = false; signalAutomaticSync() }
     }
     /** Throttled producer/login signal: frequent checkpoint/events do not create a 100ms sender loop. */
     @Synchronized fun signalAutomaticSync() {
-        if (!initialized || automaticSignal?.isActive == true) return
+        if (!initialized) return
+        if (!uiForeground) {
+            if (!backgroundRequested) { backgroundRequested = true; scheduleBackground() }
+            return
+        }
+        if (automaticSignal?.isActive == true) return
         automaticSignal = scope.launch {
             delay(5_000)
             try {
-                if (!auth.hasSession()) return@launch
+                if (!uiForeground || identities.first().guestMode || !auth.hasSession()) return@launch
                 val meta = store.meta() ?: return@launch
                 if (!automaticPreferences.automaticEnabled(meta.origin, meta.accountId)) return@launch
-                scheduleBackground()
-                runAutomaticCycle()
+                foregroundWake.trySend(Unit)
             }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { automaticFailure(error) }
         }
     }
     /** Returns true when a constrained Worker should retry a remaining bounded slice. */
-    suspend fun runAutomaticCycle(): Boolean {
+    suspend fun runAutomaticCycle(background: Boolean = false): Boolean {
+        if (!background && !uiForeground) return false
         val retryAt = retryNotBeforeNanos
         if (retryAt != 0L && System.nanoTime() - retryAt < 0L) return true
         if (!syncMutex.tryLock()) return true
         try {
-            if (!auth.hasSession()) return false
+            if (identities.first().guestMode || !auth.hasSession()) return false
             if (auth.refreshIsUncertain()) throw ClientFailure("SESSION_REFRESH_UNCERTAIN")
             var meta = store.meta()
             if (meta == null) { auth.me(); meta = store.meta() }
@@ -144,14 +187,37 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
             val approved = store.approveSnapshot(bound.origin, bound.accountId, local.profileId, extendAutomatic = true)
             val completed = syncApproved(approved)
             lastAutomaticError = null
-            backoff = 10_000; retryNotBeforeNanos = 0L
+            backoff = 5_000; retryNotBeforeNanos = 0L
             return !completed || store.hasPendingUploads()
         } finally { syncMutex.unlock() }
     }
     suspend fun runBackgroundCycle(): Boolean {
-        if (!auth.hasSession()) return false
+        if (uiForeground || identities.first().guestMode || !auth.hasSession()) return false
         retrySocial()
-        return runAutomaticCycle()
+        return runAutomaticCycle(background = true)
+    }
+    fun isUiForeground(): Boolean = uiForeground
+    fun setUiForeground(visible: Boolean) {
+        val entered = visible && !uiForeground
+        uiForeground = visible
+        if (entered) {
+            backgroundRequested = false; retryNotBeforeNanos = 0L; backoff = 5_000
+            nextForegroundCycleNanos = 0L
+        }
+        if (!visible) { backgroundRequested = true; scheduleBackground() }
+        foregroundWake.trySend(Unit) // immediate entry; never waits for a sleeping background timer
+    }
+    suspend fun backgroundEnabled(): Boolean {
+        if (identities.first().guestMode || !auth.hasSession() || auth.refreshIsUncertain()) return false
+        val m = store.meta() ?: return false
+        return m.origin == auth.state.value.origin && automaticPreferences.automaticEnabled(m.origin, m.accountId)
+    }
+    suspend fun continueWithoutAccount() {
+        accountChoiceGeneration.incrementAndGet()
+        saveGuestChoice(true); accountLoginRequested = false
+        cancelBackground(); store.pauseConsent()
+        mutable.update { it.copy(friends = FriendsUiState(FeatureStatus.NOT_CONNECTED), syncStatus = SyncStatus.LOCAL_ONLY,
+            loginCompleted = false) }
     }
     private fun automaticFailure(error: Exception) {
         val code = (error as? ClientFailure)?.code ?: "CLIENT_ERROR"
@@ -165,13 +231,14 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         if (!available) {
             mutable.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
         } else {
-            retryNotBeforeNanos = 0L; backoff = 10_000
+            retryNotBeforeNanos = 0L; backoff = 5_000
             signalAutomaticSync()
         }
     }
     fun backgroundFailure(error: Exception) { automaticFailure(error) }
     private suspend fun ensureAutomaticAllowed(origin: String, accountId: String) {
         if (!auth.hasSession()) throw ClientFailure("LOGIN_REQUIRED")
+        if (identities.first().guestMode) throw ClientFailure("LOGIN_REQUIRED")
         if (auth.state.value.origin != origin) throw ClientFailure("ACCOUNT_BINDING_CONFLICT")
         if (!automaticPreferences.automaticEnabled(origin, accountId)) throw ClientFailure("AUTOMATIC_SYNC_DISABLED")
     }
@@ -221,6 +288,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         var resnapshot = false
         var pages = 0
         while (true) {
+            requireAccount()
             if (++pages > 10_000) throw ClientFailure("PULL_LIMIT")
             val m = store.meta() ?: throw ClientFailure("LOGIN_REQUIRED")
             val path = "/v1/sync/pull?limit=200" + (m.cursor?.let { "&cursor=${ServerOrigin.query(it)}" } ?: "")
@@ -236,6 +304,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         }
     }
     private suspend fun execute(wire: WireRow, approved: UploadScopeRow? = null) {
+        requireAccount()
         if (wire.outboxId != null) {
             ensureAutomaticAllowed(wire.origin, wire.accountId)
             store.requireApproved(wire, approved ?: throw ClientFailure("CONSENT_REQUIRED"))
@@ -251,6 +320,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         }
     }
     private suspend fun retrySocial() = syncMutex.withLock {
+        requireAccount()
         // Explicit social mutations are distinct from the account-bound raw automatic-sync toggle.
         for (wire in store.socialRequests()) {
             if (wire.errorCode == null) execute(wire)
@@ -260,6 +330,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         (error.code == "OFFLINE" || error.httpStatus == 429 || error.httpStatus in 500..599)
 
     suspend fun refreshFriends() {
+        requireAccount()
         mutable.update { it.copy(friends = it.friends.copy(status = FeatureStatus.LOADING)) }
         try {
             val profile = auth.state.value.profile ?: auth.me()
@@ -270,7 +341,8 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
                 .filter { WireCodec.text(it, "state") == "pending" }.map { r ->
                     val incoming = WireCodec.text(r, "targetAccountId") == profile.accountId
                     val other = WireCodec.uuid(WireCodec.text(r, if (incoming) "senderAccountId" else "targetAccountId"))
-                    FriendSummary(other, other, null, if (incoming) FriendRelation.INCOMING else FriendRelation.OUTGOING,
+                    val displayName = WireCodec.optional(r, "displayName")?.trim()?.takeIf { it.isNotEmpty() } ?: "Пользователь"
+                    FriendSummary(other, displayName, null, if (incoming) FriendRelation.INCOMING else FriendRelation.OUTGOING,
                         WireCodec.uuid(WireCodec.text(r, "requestId")))
                 }
             mutable.update { it.copy(friends = FriendsUiState(FeatureStatus.READY, accepted + requests,
@@ -281,6 +353,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         }
     }
     suspend fun search(query: String) {
+        requireAccount()
         mutable.update { it.copy(friends = it.friends.copy(searchResults = emptyList())) }
         val response = auth.authorized("GET", "/v1/users/search?q=${ServerOrigin.query(query)}")
         if (!response.isNull("nextCursor")) throw ClientFailure("UNSUPPORTED_PAGINATION")
@@ -295,7 +368,9 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         social("POST", "/v1/friend-requests/${WireCodec.uuid(requestId)}/respond", JSONObject().put("accept", accept))
         refreshFriends()
     }
-    suspend fun openFriend(accountId: String, range: DayRange, period: HistoryPeriod = HistoryPeriod.WEEK) {
+    suspend fun openFriend(accountId: String, range: DayRange, period: HistoryPeriod? = null) {
+        requireAccount()
+        val requestedPeriod = period ?: mutable.value.friends.selected?.history?.period ?: HistoryPeriod.WEEK
         mutable.update { it.copy(friends = it.friends.copy(selected = null, status = FeatureStatus.LOADING)) }
         try {
             val query = "fromInclusive=${range.fromInclusive}&toExclusive=${range.toExclusive}&zoneId=${ServerOrigin.query(range.zoneId)}"
@@ -303,7 +378,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
             val snapshot = WireCodec.snapshot(response)
             if (snapshot.owner.accountId != accountId || snapshot.history.range != range) throw ClientFailure("INVALID_RESPONSE")
             mutable.update { it.copy(friends = it.friends.copy(status = FeatureStatus.READY,
-                selected = snapshot.copy(history = snapshot.history.copy(period = period)))) }
+                selected = snapshot.copy(history = snapshot.history.copy(period = requestedPeriod)))) }
         } catch (error: Exception) {
             mutable.update { it.copy(friends = it.friends.copy(status = FeatureStatus.ERROR, selected = null)) }
             throw error
@@ -312,6 +387,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
     fun closeFriend() { mutable.update { it.copy(friends = it.friends.copy(selected = null)) } }
     /** Refresh only the already-open authorized owner/range; never expands a grant or merges friend raw data. */
     private suspend fun refreshSelectedFriend() {
+        if (identities.first().guestMode) return
         if (!mutable.value.automaticEnabled) return
         val selected = mutable.value.friends.selected ?: return
         val viewer = auth.state.value.profile ?: return
@@ -342,6 +418,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         social("PUT","/v1/me/discoverability",SocialWire.discoverability(enabled))
     }
     suspend fun sharing(grant: SharingGrantDraft) = syncMutex.withLock {
+        requireAccount()
         val submitted = grant.copy(habitIds = grant.habitIds.toSet())
         // Reject unresolved/open-ended input before IO. This Android editor requires both dates.
         SocialWire.validateSharing(submitted)
@@ -356,6 +433,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         mutable.update { it.copy(notice = UiNotice(UUID.randomUUID().toString(),"SHARING_SAVED","Новый явный набор доступа подтверждён сервером. Пустой набор отзывает доступ.")) }
     }
     private suspend fun social(method: String, path: String, body: JSONObject) {
+        requireAccount()
         auth.me()
         try { execute(store.enqueue(method, path, body)) }
         catch (error: Exception) { updateMeta(); throw error }
@@ -374,6 +452,9 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
             auth.state.value.profile != null && (m?.uploadEnabled == true || m?.lastSuccessAt != null) -> SyncStatus.IDLE
             else -> SyncStatus.LOCAL_ONLY
         }, lastSuccessAt = m?.lastSuccessAt) }
+    }
+    private suspend fun requireAccount() {
+        if (identities.first().guestMode || !auth.hasSession()) throw ClientFailure("LOGIN_REQUIRED")
     }
     fun notify(error: Exception) {
         val code = (error as? ClientFailure)?.code ?: "CLIENT_ERROR"
