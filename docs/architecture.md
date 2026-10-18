@@ -92,4 +92,84 @@ Room должна иметь schema version/тестируемые миграц�
 
 Фактическое ядро можно развивать, не ожидая выбора палитры: хранить raw facts и отдельно подключать согласованные вычисления. В этом шаге источники/DAO/БД/collector не добавлены и фоновой работы нет. Параллельное агентное поручение фактически не отправлено.
 
-**Текущий статус после ответов пользователя:** основные шкалы/цвет/нормировка приняты (DEC-013), нулевой лимит разрешён без деления на0; неизвестный вклад нулевой ветки в curve не выдуман. **Разработка поставлена пользователем на паузу**, разрешена только фиксация правил. До его дальнейшего разрешения не начинать ни data/tracking, ни UI, ни новые сессии/сборки/телефонные тесты. Фиксация документации и её commit/push выполняются по ранее принятому порядку.
+**Текущий статус:** пользователь возобновил запрос реализации и server prep (DEC-015/016), zero-limit success уточнён как 100%. Штатным task обычному desktop поручен review/исправление новых профилей; эта конфигурационная работа проверена, но **не является High-разработкой или серверным исполнением**. Текущий API Арчи не предоставляет `chrona-*` targets/model-variant override. Ниже — передача разрешённому High-координатору, не работающая серверная БД/инфраструктура.
+
+## План исполнения координатором — пока не выполнен
+
+### Предварительные условия запуска
+
+1. Реально доступный `task` (V1)/`subagent` (V2) с нужными разрешёнными High-профилями. В текущем API Арчи есть только browser/desktop/sysadmin/developer, без `chrona-*` и model/variant override; developer дополнительно требует ручного вызова пользователем. Обычный desktop review подтверждает работу task, но не запуск High. Не стартовать новые OpenCode/model сессии из shell/HTTP ради обхода.
+2. High задаётся фактическим supported task/session override или предварительно согласованными разовыми профилями, с проверкой model/variant metadata. Если этого нет — не запускать Medium и не назвать его High. Штатные профили/default Medium сохранить; при временных изменениях вернуть/проверить в конце. Сейчас5профилей/default проверены Medium, config не менялся.
+3. Подтвердить target по датированной server-карте, не угадывать private адрес. Private закрыт всем 7 job-профилям, включая coordinator: обычный Арчи/владелец передаёт только необходимый подтверждённый SSH alias/контекст, не портрет/credentials, без публикации в Git. Координатор не обходит запрет через поиск/shell. Текущий аудит ещё не выполнен; старый Debian/Docker/CPU inventory — ориентир, не runtime.
+4. До пакетов/сервисов/портов получить точный план после аудита и отдельное нужное sudo-разрешение. Не выполнять system upgrade/reboot/global route/firewall изменения по умолчанию. Прежние bot dirs можно реорганизовывать только в относящемся scope с backup/проверкой активности, не удалять чужое рабочее окружение вслепую.
+
+### Разделение исполнителей / файлов
+
+| Исполнитель | Задача | Граница |
+|---|---|---|
+| Координатор | Контракт API/DB/метрик, зависимости, интеграция, Git/dev и проверка High/Medium | Один Git-писатель; это пока не запущенная роль |
+| Developer UI | UI-v2 по requirements:nav/profile/cards/emotions/history | Отдельное worktree/ветка/файлы UI, без секретов/deploy и гонки со сборками другого исполнителя |
+| Developer Android core | Room/DAO/repositories,raw manual entries,Shorts collector,source constraints/миграции/score tests | Не переписывать одновременно UI/sharedGradle; owner общих build/schema/DTO назначает координатор |
+| Sysadmin | Живой аудит,безопасный Xray/proxy/Docker/секреты/сеть/deploy/backup/документация | Никакого глобального VPN/непроверенных удалений/секретов в Git |
+| Developer backend при необходимости | API/bot/serverSQL и протокольные тесты по общему контракту | В текущем task-пакете запускается root по запросу sysadmin, с отдельными server-файлами; не второй автор тех же Android/core файлов |
+
+Использовать обычный task/subagent с ID/chain/целью/scope/checks, не вызывать себя/предков. При необходимости второго sysadmin его назначает root-координатор параллельно, не sysadmin-self-call. Максимальная глубина2. Дочерние помощники не commit/push/общий журнал. Для worktrees/shared files нужна явная изоляция; не запускать несколько тяжёлых Android build/install на одном устройстве одновременно. Продуктовые High-сессии/worktrees не создавались; обычная desktop review-сессия отдельно проверяла конфигурацию.
+
+### Предлагаемое серверное устройство
+
+```text
+new authorized consumers ─── private Docker network ── Xray SOCKS :10808 ── outbound VLESS
+                                ↑
+                           Chrona bot worker ── Telegram Bot API
+                                ↕
+                      application/API layer ── own SQL data
+                                ↕ HTTPS
+                       Android local-first Room
+```
+
+- Отдельный reusable proxy service/закрытая сеть и документированный endpoint типа `socks5h://xray-proxy:10808`. Для host-потребителей optional bind только `127.0.0.1:10808`, если порт свободен; внутри Docker localhost другого контейнера не является proxy. **Не** публиковать SOCKS наружу/на0.0.0.0host, не использовать privileged/TUN/global DNS без отдельной необходимости.
+- Официальный Xray release/image с закреплённой версией/digest/provenance и проверкой CPU/arch (старый аудит безAVX2), не случайныйcurl|sh. Копировать приватно только необходимую **client**-конфигурацию/outbound/key; не SSH private key и не всё personal VPN окружение. Laptop proxy не отключать/не менять.
+- Secrets вне project/build context/Git: owner-limited files/0600/read-only mount. Значения не выводить, не писать token-bearing Bot API URLs в logs. `.env.example` только placeholders; Compose secrets сами по себе не шифруют storage.
+- Для каждого consumer явно проверить поддержку SOCKS/remote DNS и фактический маршрут. Одного HTTP_PROXY/ALL_PROXY недостаточно для любой библиотеки. Если клиенту нужен HTTP proxy, это отдельный inbound/адаптер, не молчаливое использование HTTP наSOCKS-порту.
+- Бота создать через BotFather владельца/разрешённый интерфейс. Username availability и token не угадывать; пока бота/токена нет, mock не считается успешной Telegram-проверкой.
+- Для требования≈5с предлагается `getUpdates(timeout=5)` long polling с HTTP timeout запасом, durable offset/update-id dedup и одним consumer, без лишнего sleep после каждого ответа. Это проектное предложение реализации интервала, ещё не испытанное/не развёрнутое. Poll loop/новые сообщения/ошибки proxy проверяются реально.
+- Docker/Compose persistent volumes, schema migrations,health/readiness,ограниченные logs и `restart: unless-stopped` как кандидат. **Internet loss требует reconnect/retry/backoff в приложении/proxy**; restart policy не замечает живой зависший worker, а healthcheck unhealthy автоматически не рестартит контейнер. Не перезагружать весь сервер ради сетевого сбоя.
+- Существующие services/ports/data сохраняются; новые Chrona components изолированы. Server SQL(например PostgreSQL) — собственные DB/role/volume, не таблицы Nextcloud; окончательный выбор после runtime-audit. Нельзя считать Android Room заменой серверной SQL или наоборот.
+- Регулярный backup/restore test нужны отдельно от sync; off-host destination/ключ восстановления выбрать, не покупать storage/не публиковать secrets автоматически.
+
+### Что должно быть доказано перед «близко к работе»
+
+- Xray config validation/start/version/listener/privacy boundary; laptop listener/SSH/Tailscale/старыйHTTPS не нарушены.
+- Реальный Telegram `getMe/getUpdates`/test message-response через явный proxy без токенов/сырых chats в отчёте; работоспособность новых consumers подтверждается одинаковым endpoint/config template.
+- Контролируемый сбой только собственного proxy/bot network (не host internet/SSH), reconnect/повторная доставка после восстановления, нет второго polling consumer/повторной бизнес-операции, offset/jobs сохраняются после restart.
+- Core DB/tests/migrations/безопасное восстановление; Shorts actual только collector, unknown не ложный0. Zero-limit known0 имеет100% score, raw actual/0 не вычисляется; undefined zero-curve coefficient не выдумывать.
+- До независимого API/bot/client кода общий DTO/auth/session/ownerID/friendACL контракт. Реальные профили/синхронизация/разрешённые интервалы проверяются end-to-end, не «потом просто склеим» по разным догадкам.
+- Документация: что реально изменено/версии/неудачи/команды/checks/rollback/backup и добавление нового consumer к10808; config примеры обезличены, не имитировать непроверенное успехом.
+
+**Фактический статус этого плана:** подготовка документов/профилей и штатный desktop review с исправлением прав. Ни server SSH/sudo, ни перенос config/key, ни BotFather/токен, ни Docker/deploy, ни продуктовые High-вызовы не выполнялись. Git-доставка документов/конфигурации — отдельный принятый workflow, не серверное исполнение. Блокер запуска нужных High-targets остаётся.
+
+### Подготовленные High-профили: конфигурация, не запущенные работники
+
+Для корректного запуска **без shell-обхода** добавлены проектные `.opencode/agents/`:
+
+| Профиль | Назначение |
+|---|---|
+| `chrona-coordinator-high` | Явно выбираемый primary-координатор задачи наHigh |
+| `chrona-ui-high` | Developer UI-v2 |
+| `chrona-core-high` | Developer Android Room/tracking/метрики |
+| `chrona-backend-high` | Developer server API/bot/SQL-код |
+| `chrona-infra-high` | Sysadmin audit/Xray/proxy/Docker/deploy/recovery |
+| `chrona-browser-high` | Официальные источники/разрешённые веб-интерфейсы |
+| `chrona-desktop-high` | Локальная среда/ADB/необходимый laptopVPNclient scope |
+
+Все job-профили задают `openai/gpt-6.1-sol`, `variant: high`. **Пять обычных глобальных ролей и provider/default не менялись, остаютсяMedium.** Нет project `default_agent` override. High-профили используются только при явном выборе/вызове, не как новый постоянный default.
+
+Здесь применяется **плоская** схема: coordinator→helpers, у helpers task deny. Sysadmin возвращает запрос дополнительного кодера root, не вызывает свою/другие роли самостоятельно. Только root Git/integration. У helpers edit deny по умолчанию, разрешены только prospective own worktree/run; root/shared/peer правки проверены как deny. Private read/edit/external_directory закрыт всем семи, в том числе coordinator; необходимый контекст — только точечным handoff от обычного Арчи/владельца без секретов/портрета. Это не расширяет текущему чату инструменты или право вызывать себя.
+
+Первоначальный packaged Desktop catalog test прошёл `CHRONA_HIGH_CATALOG_OK`. Последующий независимый review обнаружил, что read deny не закрывает grep, а helper edit без начального deny наследует ask. Перед исправлениями сохранены 7 исходных профилей: `/tmp/opencode/chrona-high-before-review-20261018/`. В финальных профилях grep отключён: backend проверяет его query, не файловый путь; нужный поиск только отдельно проверенной ограниченной командой/через координатора с явным scope. Неработающие узкие private-исключения coordinator удалены: проверка dirname остаётся fail-closed.
+
+Финальный isolated test `/tmp/opencode/verify-chrona-high-review-20261018.cjs` прошёл **`CHRONA_HIGH_REVIEW_OK; 409 assertions; 7 High / 5 Medium`**. Он получает только in-memory каталог и проверяет правила извлечёнными без изменений pure evaluator/wildcard-функциями установленного backend. Synthetic own/root/peer/shared/private paths, task, grep, модели/default проверены без открытия реальных private-файлов. HOME/XDG изолированы, auth только тестовая, MCP/plugins выключены лишь в test override; listener/session/prompt/model calls отсутствуют. Глобальные config/пять обычных профилей неизменны. Это **не** actual High model execution и не полный tool-pipeline/OS sandbox.
+
+Ограничения защиты: glob/list могут раскрывать метаданные, broad scans запрещены инструкциями. Shell/MCP/wrappers не файловая песочница; доступ/запись через них требуют отдельного scope/одобрения и не служат обходом read/edit/Git deny. Symlink/adversarial pipeline не испытывались. До кода root создаёт/назначает worktrees и ownership; в этом этапе они ещё не созданы.
+
+Чтобы загрузить эту конфигурацию, пользователь должен полностью выйти/запустить OpenCode и открыть **папку `/home/niki/android-tracker`**, не desktop-customization. Затем новая UI-сессия с `chrona-coordinator-high` и явной проверкой High в выбранной модели. Root сначала проверяет **наличие всех шести `chrona-*` targets в task/subagent и runtime model/variant metadata**; одного обычного task недостаточно. Если нужных targets нет, остаётся блокер клиента/API, не повод shell/HTTP-обхода. Перезапуск не гарантирует этот каталог. После job проверить штатный Medium/default и сохранённый UI-выбор, не заявлять восстановленным то, что не менялось.

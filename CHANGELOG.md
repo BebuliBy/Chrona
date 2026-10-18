@@ -105,3 +105,25 @@
 - Shorts actual **строго read-only для пользователя**, только системой; добавлен SHORTS-005 и ограничение в AGENTS/контракте данных, manual Adjustment отвергнут.
 - Нулевой лимит разрешён как бинарное соблюдение/нарушение без actual/0. Конкретный вклад этой ветки в общую curve/отдельное отображение не выбран автоматически.
 - По просьбе пользователя работа на паузе: только фиксация документации/памяти и её Git-порядок. Код/APK/БД/зависимости не менялись, сборок/телефонных тестов/новых сессий не было. Оставшиеся вопросы не замаскированы как решённые.
+
+## 2026-10-18 — новый запрос исполнения и пакет передачи
+
+- Уточнено: соблюдённый нулевой лимит при известномactual0 даёт **100%выполнения/q=1**, не actual/0. Unknown не стал известным0; zero-curve коэффициент не выбран самовольно.
+- Пользователь возобновил разработку и запросил временныйHigh(штатныйdefaultMediumпосле), UI/core и sysadmin сXray/proxy10808/приватнымпереносомclient config+key/новымботом/≈5сpolling/Docker/recovery/документацией. Намерение записано в требованиях/DEC-015/016, execution plan вarchitecture.
+- В исходном чате не было task/subagent, новых исполнителей/High не запускали; shell-обход отказан по правилам среды. Прочитаны публичные профили(все5Medium) и датированная server-memory, но не private map/credentials/VPNkeys/token. Config/default не менялись.
+- **Никаких live server действий, SSH/sudo/install/переноса ключей/BotFather/бота/Docker/deploy/новыхсессий не было.** Изменена только документация передачи; план не выдан за готовую инфраструктуру. Нужны правильныйlauncher и отдельные gates конкретного server плана/привилегий/BotFather.
+
+### Штатная High-конфигурация вместо shell-обхода
+
+- Добавлены7проектных профилей `.opencode/agents/chrona-*-high.md`: один primarycoordinator и6subagent helpers дляUI/core/backend/infra/browser/desktop. Модель та же, variantHigh; нормальные5глобальныхMedium/default не изменены. Нет новогоdefault_agent.
+- У helpers запрещеныTask/Git; coordinatorallowlist толькоHighhelper IDs, privateдоступ ограничен. Схемаroot→helpers, не aliasselfcall/скрытаяделегация. Рабочиеcopy/ветки/исполнители ещё не созданы.
+- In-memory packaged parser/catalogGET прошёл `CHRONA_HIGH_CATALOG_OK` без listener/chat/session/prompt/modelcall;7High и5Medium подтверждены как **настройки**, не как actualисполнение наHigh. Глобальный config не менялся; новых модельныхOpenCode-процессов не запускали.
+- Инструкции загрузки требуют обычного restart/UI-выбора **Chrona folder + chrona-coordinator-high** и проверки нужных targets/High; файлы не добавляют их действующему API автоматически. Сервер/ключи/бот/runtimeDocker по-прежнему не изменены.
+- До будущих server/data работ в `.gitignore` добавлены runtime/volumes и сырыеDB/dump форматы, чтобы реальные данные не попали в Git; таких данных в этом шаге не создавали/не читали.
+
+### Review прав профилей перед отправкой
+
+- У текущего Арчи штатный task уже доступен. Обычному desktop поручены независимый review и минимальные fixes; это не High-исполнение и не продуктовая разработка. API по-прежнему не предоставляет `chrona-*` targets/model-variant override.
+- До исправлений сохранён backup 7 новых профилей. У helpers edit теперь deny по умолчанию с own worktree/run allow; root/shared/peer правки запрещены. Во всех 7 grep deny, private read/edit/external_directory deny. Coordinator получает необходимый подтверждённый контекст от обычного Арчи/владельца, не открывает private ради server-карты.
+- Финальная isolated проверка установленного backend и его pure evaluator/wildcard: **409 assertions PASS, 7 High / 5 Medium**. Никаких listener/session/prompt/model calls или реальных private reads; глобальные Medium/default не изменены. Glob/list metadata, shell/MCP и непроверенный adversarial pipeline не объявлены OS sandbox.
+- README/requirements/decisions/architecture/roadmap уточнены по реальному статусу. Runtime-код/зависимости/APK не менялись; новые build/phone/server tests не запускались. High-исполнители/Room/collector/Xray/bot/Docker всё ещё не запущены/не реализованы этим этапом.
