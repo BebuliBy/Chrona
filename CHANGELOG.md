@@ -2,6 +2,13 @@
 
 Здесь только факты внесённых изменений. Планы — в docs/roadmap.md, принятые решения — в docs/decisions.md. Разработка функций не считается выполненной по одному описанию.
 
+## 2026-10-18 — первая синхронизация владельца
+
+- Owner сам выполнил Sync/pending20+→0. Count-only READ ONLY server check подтвердил
+  22 committed accepted operation receipts с revision, conflict/rejected0.
+- Изменена только документация: без push/retry/SQL writes/phone действий от агентов.
+  Restore/friend ACL/полнота истории не объявлены проверенными.
+
 ## 2026-10-18 — владелец подтвердил успешный вход
 
 - После worker87 пользователь сообщил «Я уже вошёл, всё успешно». Login blocker

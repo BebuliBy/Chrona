@@ -1,5 +1,27 @@
 # Chrona — интеграционный checkpoint 2026-10-18
 
+## Первая owner sync — серверный commit подтверждён
+
+Владелец сам нажал Sync и сообщил pending20+→0. Затем sysadmin выполнил одну
+REPEATABLE READ READ ONLY transaction, только counts/type/status, без значений
+привычек, IDs, токенов, interval timestamps, JSON/body/history или phone доступа.
+
+- Accounts1/entity owners1; accepted operation receipts **22**, все с revision,
+  duplicate/conflict/rejected/unknown0. Сохранённых sync request receipts22,
+  nested accepted results22.
+- Current entities18: habit1, intervals2, segments10, gaps5; все с revision.
+  Committed change_log23: habit1, intervals2, segments10, gaps10.
+- Source фиксирует results/entities/changes одной транзакцией: серверное сохранение
+  22 accepted операций подтверждено. Один account позволяет ограниченно связать их
+  с единственным владельцем, но нет timestamp/request correlation с точным button batch.
+- 18 текущих entities не обязаны равняться22 операциям: одна entity может обновляться,
+  system habit provision создаёт отдельное состояние. Разница не доказывает потерю.
+- Полнота всей локальной истории, правильность содержимого/детектора, restore,
+  friends/revoke/ACL и complete two-way E2E ещё не проверены. Bot queues не смешивались
+  с Android outbox. Агент ничего не отправлял/не менял; это не новый upload consent.
+
+Остальные разделы ниже — предыдущие checkpoints до этой первой синхронизации.
+
 **Последующее подтверждение владельца:** «Я уже вошёл, всё успешно». Реальный
 Telegram-вход на телефоне подтверждён пользователем после worker87; прежний login
 blocker закрыт. Новых SQL/ADB/vault проверок не было. Sync/friends/restore и полный
