@@ -6,6 +6,7 @@ import java.util.Locale
 /** Shared UI/core syntax policy. No DNS/TLS checks and no embedded deployment address. */
 object ServerBaseUrl {
     fun normalize(input: String): String? {
+        // BEGIN CHRONA_BASE_URL_POLICY
         val text = input.trim()
         if (text.isEmpty() || text.length > 2048 || text.any { it.code <= 32 || it.code >= 127 } || '%' in text || '\\' in text) return null
         val uri = runCatching { URI(text) }.getOrNull() ?: return null
@@ -27,5 +28,6 @@ object ServerBaseUrl {
                     it.lowercase(Locale.ROOT) in credentials || Regex("bot[0-9].*", RegexOption.IGNORE_CASE).matches(it) }) return null
         }
         return URI("https", null, host, if (uri.port == 443) -1 else uri.port, path, null, null).toASCIIString()
+        // END CHRONA_BASE_URL_POLICY
     }
 }

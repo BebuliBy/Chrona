@@ -7,12 +7,15 @@ import android.os.Looper
 import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -47,29 +50,37 @@ internal fun rememberReducedMotion(): Boolean {
     return reduced
 }
 
-/** Seven semantic faces. No emoji font dependency, infinite transition, tick or business formula. */
+/** Original yellow emoji-style Canvas art, not Telegram assets or a pixel-identical reproduction. */
 @Composable
 internal fun EmotionFace(emotion: Computed<Emotion>?, reveal: Float = 1f, modifier: Modifier = Modifier) {
-    val mood = (emotion as? Computed.Ready)?.value
-    val label = mood?.label() ?: "Эмоция недоступна"
-    val ink = MaterialTheme.colorScheme.onSurface
-    val fill = MaterialTheme.colorScheme.secondaryContainer
-    val accent = MaterialTheme.colorScheme.primary
-    val scale = 1f + sin(reveal * PI).toFloat() * .12f
-    Canvas(modifier.size(64.dp).graphicsLayer { scaleX = scale; scaleY = scale; rotationZ = sin(reveal * PI * 2).toFloat() * 5f }
+    val supplied = (emotion as? Computed.Ready)?.value
+    // Undefined goal/zero-limit emotion is a neutral drawing, never a made-up percentage or tier.
+    val mood = supplied ?: Emotion.NEUTRAL
+    val label = supplied?.label() ?: "Нейтральное лицо"
+    val reduced = rememberReducedMotion()
+    val appearance = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        if (reduced) appearance.snapTo(1f) else appearance.animateTo(1f, tween(520))
+    }
+    val intro = if (reduced) 1f else appearance.value
+    val commit = if (reduced) 1f else reveal.coerceIn(0f, 1f)
+    val scale = .94f + .06f * intro + sin(commit * PI).toFloat() * .045f
+    val rotation = sin(intro * PI).toFloat() * 1.8f + sin(commit * PI * 2).toFloat() * 2.5f
+    val blinkPhase = if (commit < 1f) commit else intro
+    val blink = if (blinkPhase in .42f.. .58f) sin((blinkPhase - .42f) / .16f * PI).toFloat() else 0f
+    val ink = Color(0xFF58320E)
+    val goldenEdge = Color(0xFFE6A12A)
+    val tearBlue = Color(0xFF47B7F4)
+    Canvas(modifier.size(64.dp).graphicsLayer { scaleX = scale; scaleY = scale; rotationZ = rotation }
         .semantics { contentDescription = label }) {
         val d = size.minDimension
         val c = Offset(size.width / 2, size.height / 2)
         val r = d * .43f
         val stroke = d * .033f
-        drawCircle(fill, r, c)
-        drawCircle(ink.copy(alpha = .15f), r, c, style = Stroke(stroke / 2))
-        if (mood == null) {
-            drawCircle(ink.copy(alpha = .55f), d * .027f, c - Offset(d * .1f, 0f))
-            drawCircle(ink.copy(alpha = .55f), d * .027f, c)
-            drawCircle(ink.copy(alpha = .55f), d * .027f, c + Offset(d * .1f, 0f))
-            return@Canvas
-        }
+        drawCircle(Brush.radialGradient(listOf(Color(0xFFFFEB8A), Color(0xFFFFD044), Color(0xFFFFBD2F)),
+            center = c + Offset(-d * .12f, -d * .18f), radius = d * .7f), r, c)
+        drawCircle(goldenEdge, r, c, style = Stroke(stroke / 2))
+        drawOval(Color.White.copy(alpha = .18f), c + Offset(-d * .24f, -d * .32f), Size(d * .30f, d * .12f))
         val left = c + Offset(-d * .15f, -d * .10f)
         val right = c + Offset(d * .15f, -d * .10f)
         if (mood == Emotion.STARS) {
@@ -82,10 +93,16 @@ internal fun EmotionFace(emotion: Computed<Emotion>?, reveal: Float = 1f, modifi
                     val y = eye.y + sin(angle).toFloat() * radius
                     if (n == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
-                path.close(); drawPath(path, accent)
+                path.close()
+                drawPath(path, Color(0xFFFFF3A0))
+                drawPath(path, Color(0xFFBC7412), style = Stroke(stroke * .65f))
             }
         } else {
-            listOf(left, right).forEach { eye -> drawOval(ink, eye - Offset(d * .028f, d * .04f), Size(d * .056f, d * .08f)) }
+            listOf(left, right).forEach { eye ->
+                val height = d * .092f * (1f - .85f * blink)
+                drawOval(ink, eye - Offset(d * .031f, height / 2), Size(d * .062f, height))
+                if (blink < .3f) drawCircle(Color.White.copy(alpha = .7f), d * .010f, eye + Offset(-d * .009f, -d * .018f))
+            }
         }
         val mouth = Path()
         val y = c.y + d * .19f
@@ -95,7 +112,16 @@ internal fun EmotionFace(emotion: Computed<Emotion>?, reveal: Float = 1f, modifi
         }
         mouth.moveTo(c.x - d * .17f, y)
         mouth.quadraticTo(c.x, y + d * bend, c.x + d * .17f, y)
-        drawPath(mouth, ink, style = Stroke(stroke))
+        if (mood == Emotion.BIG_SMILE || mood == Emotion.STARS) {
+            mouth.quadraticTo(c.x, y + d * .025f, c.x - d * .17f, y)
+            mouth.close()
+            drawPath(mouth, ink)
+            val teeth = Path().apply {
+                moveTo(c.x - d * .12f, y + d * .015f)
+                quadraticTo(c.x, y + d * .055f, c.x + d * .12f, y + d * .015f)
+            }
+            drawPath(teeth, Color(0xFFFFFCED), style = Stroke(stroke * 1.5f))
+        } else drawPath(mouth, ink, style = Stroke(stroke))
         if (mood == Emotion.VERY_SAD || mood == Emotion.TEARS) {
             drawLine(ink, left + Offset(-d * .065f, -d * .09f), left + Offset(d * .04f, -d * .13f), stroke)
             drawLine(ink, right + Offset(-d * .04f, -d * .13f), right + Offset(d * .065f, -d * .09f), stroke)
@@ -107,7 +133,8 @@ internal fun EmotionFace(emotion: Computed<Emotion>?, reveal: Float = 1f, modifi
                 quadraticTo(eye.x + d * .10f, eye.y + d * .23f, eye.x, eye.y + d * .08f)
                 close()
             }
-            drawPath(tear, accent.copy(alpha = .7f))
+            drawPath(tear, tearBlue)
+            drawCircle(Color.White.copy(alpha = .65f), d * .017f, eye + Offset(-d * .014f, d * .18f))
         }
     }
 }

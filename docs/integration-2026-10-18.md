@@ -1,5 +1,11 @@
 # Chrona — интеграционный checkpoint 2026-10-18
 
+**Latest UX installed:** code4/0.3.2-ux, auto-sync/default-on, recorded Shorts
+counter/emotion, yellow faces, clean UI/time/today marker/managed endpoint.
+Final assembleDebug/install-r/own launch PASS, без tests/lint после последней
+просьбы владельца. Прежние one-shot-only/partial-blocking разделы ниже заменены
+DEC-021, исторические результаты не final-auto acceptance. [Итог](ux-installed-2026-10-18.md).
+
 ## Первая owner sync — серверный commit подтверждён
 
 Владелец сам нажал Sync и сообщил pending20+→0. Затем sysadmin выполнил одну

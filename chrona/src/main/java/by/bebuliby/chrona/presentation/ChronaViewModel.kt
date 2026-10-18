@@ -74,7 +74,7 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
                 mutable.update { it.copy(tab = action.tab) }
                 if (action.tab == MainTab.FRIENDS) clientAction { container.client.refreshFriends() }
             }
-            is ChronaAction.ConfigureServer -> clientAction { container.client.configure(action.baseUrl) }
+            is ChronaAction.ConfigureServer -> ManagedServerConfiguration.rejectUserEdit()
             is ChronaAction.ConfigureDiscoverability -> clientAction { container.client.configureDiscoverability(action.enabled) }
             is ChronaAction.SelectDay -> {
                 validateDay(action.day)
@@ -136,6 +136,7 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
             ChronaAction.RefreshLoginStatus -> clientAction { container.client.refreshLogin() }
             ChronaAction.Logout -> clientAction { container.client.logout() }
             ChronaAction.RequestSync -> clientAction { container.client.requestSync() }
+            is ChronaAction.SetAutomaticSync -> clientAction { container.client.setAutomaticSync(action.enabled) }
             is ChronaAction.SearchFriends -> clientAction { container.client.search(action.query) }
             is ChronaAction.RequestFriend -> clientAction { container.client.requestFriend(action.accountId) }
             is ChronaAction.RespondToFriendRequest -> clientAction { container.client.respond(action.requestId, action.accept) }
@@ -190,7 +191,7 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
             preferences = s.preferences, habits = facts.habits,
             todayCells = facts.habits.filter { h -> h.archivedAt == null }.map { h -> LocalReadModels.cell(h, old.selectedDay, facts, s.deviceId) },
             history = old.history.copy(cells = cells, summary = Scoring.summary(facts.habits, cells)),
-            details = selected, tracker = health, sync = SyncState(client.syncStatus, client.lastSuccessAt, facts.pending),
+            details = selected, tracker = health, sync = SyncState(client.syncStatus, client.lastSuccessAt, facts.pending, client.automaticEnabled),
             friends = client.friends, connection = ConnectionUiState(client.baseUrl, client.loginPending,remote?.discoverable ?: false),
         ) }
     }

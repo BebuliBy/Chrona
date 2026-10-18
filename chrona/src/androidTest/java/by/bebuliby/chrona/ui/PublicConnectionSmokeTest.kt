@@ -2,10 +2,6 @@ package by.bebuliby.chrona.ui
 
 import android.app.KeyguardManager
 import android.os.PowerManager
-import android.util.Log
-import android.view.WindowManager
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -26,231 +22,77 @@ import org.junit.runners.model.Statement
 import java.net.InetAddress
 import java.net.URI
 
-/** One native first-configuration probe. No fixtures, login, sync, screenshots or secret inspection. */
+/**
+ * Separately authorized native connectivity probe, skipped before Activity launch without an argument.
+ * No longer a configuration test: the user UI intentionally has no server editor. Never reads vault,
+ * changes target/account, clicks login/sync, wakes/unlocks, takes screenshots or logs a URL/tree.
+ */
 @RunWith(AndroidJUnit4::class)
 class PublicConnectionSmokeTest {
     private var stage = "ARGUMENT"
     private lateinit var target: String
-    private lateinit var requestedInput: String
 
-    // Outside the activity rule: absent argument skips without launching MainActivity. Also sanitizes
-    // rule setup/teardown errors, not just assertions, so Compose trees cannot enter the test result.
     @get:Rule(order = 0)
     val privacy = TestRule { base, _ -> object : Statement() {
         override fun evaluate() {
             val argument = InstrumentationRegistry.getArguments().getString("publicApiBaseUrl")
             Assume.assumeTrue("PUBLIC_CONNECTION_SMOKE_ARGUMENT_REQUIRED", !argument.isNullOrBlank())
             try {
-                enter("VALIDATE_ARGUMENT")
+                stage = "VALIDATE_ARGUMENT"
                 target = ServerBaseUrl.normalize(argument!!) ?: throw AssertionError()
-                requestedInput = argument.trim()
                 check(ServerOrigin.parse(target) == target)
-                enter("TARGET_DEBUG_PACKAGE")
-                check(InstrumentationRegistry.getInstrumentation().targetContext.packageName == "by.bebuliby.chrona.debug")
+                val context = InstrumentationRegistry.getInstrumentation().targetContext
+                check(context.packageName == "by.bebuliby.chrona.debug")
+                stage = "AWAKE_UNLOCKED"
+                check(context.getSystemService(PowerManager::class.java).isInteractive)
+                check(!context.getSystemService(KeyguardManager::class.java).isKeyguardLocked)
                 base.evaluate()
             } catch (failure: Throwable) {
-                val kind = failure.javaClass.simpleName.replace(Regex("[^A-Za-z0-9_]"), "_").take(80).ifEmpty { "Throwable" }
-                // Intentionally no cause/original message/suppressed exception/semantics/URL/body.
+                val kind = failure.javaClass.simpleName.replace(Regex("[^A-Za-z0-9_]"), "_").take(80)
                 throw AssertionError("PUBLIC_CONNECTION_SMOKE_FAILED_STAGE_${stage}_$kind")
             }
         }
     } }
 
-    @get:Rule(order = 1)
-    val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
 
-    @Test
-    fun public401AndFirstNativeServerConfiguration() {
-        enter("AWAKE_UNLOCKED")
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        check(context.getSystemService(PowerManager::class.java).isInteractive)
-        check(!context.getSystemService(KeyguardManager::class.java).isKeyguardLocked)
-
-        withOwnDisplayKeptAwake { runPublicProbe() }
-    }
-
-    private fun runPublicProbe() {
-        enter("DNS_GLOBAL")
-        val resolved = InetAddress.getAllByName(URI(target).host)
-        val global = resolved.isNotEmpty() && resolved.all(::isGlobalAddress)
-        Log.i(TAG, "DNS_GLOBAL_$global")
-        if (!global) { enter("TAILNET_ROUTE_NOT_PUBLIC_TEST"); throw AssertionError() }
-
-        enter("ANONYMOUS_GET_ME")
-        // Exactly one direct probe request. No bearer, body, idempotency key or auth/session client.
+    @Test fun anonymous401AndNoUserServerEditor() {
+        stage = "DNS_GLOBAL"
+        val addresses = InetAddress.getAllByName(URI(target).host)
+        check(addresses.isNotEmpty() && addresses.all(::isGlobalAddress))
+        stage = "ANONYMOUS_GET_ME"
+        // Exactly one anonymous request to the explicit test argument, NOT a claim about persisted target.
         val status = runBlocking { HttpsTransport().execute(HttpRequest(target, "GET", "/v1/me")).status }
-        Log.i(TAG, "HTTP_STATUS_$status")
         check(status == 401)
-
-        enter("NATIVE_ROOM_READY")
-        // This constant system card appears only after the real repository has provisioned/read Room.
-        // No personal habit IDs, profile values, database or VM state are inspected.
-        compose.waitUntil(20_000) { exists("habit_${ChronaRepository.SHORTS_ID}") }
-        enter("OPEN_OWN_SETTINGS")
+        stage = "NATIVE_ROOM_READY"
+        compose.waitUntil(20_000) {
+            compose.onAllNodesWithTag("habit_${ChronaRepository.SHORTS_ID}")
+                .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+        }
+        stage = "READ_ONLY_SETTINGS"
         compose.onNodeWithTag("profile_menu").performClick()
         compose.onNodeWithText("Настройки").performClick()
-        compose.onNodeWithTag("server_base_url").performScrollTo().assertIsDisplayed()
-        compose.waitForIdle()
-
-        enter("REVIEW_EXISTING_LOGIN")
-        // A first-setup smoke must not log out an existing account or cancel an owner's pending login.
-        if (exists("logout") || exists("refresh_login")) {
-            enter("EXISTING_LOGIN_REVIEW_REQUIRED"); throw AssertionError()
-        }
-        val previous = ServerBaseUrl.normalize(ownEditableValue())
-        if (previous == target) {
-            // The previous probe may already have saved successfully. Do not rewrite/clear/toggle it.
-            enter("CONFIG_ALREADY_SAVED")
-            awaitConfigured("WAIT_ALREADY_SAVED_CONFIG")
-            assertOwnConfiguredControls(checkSaveButton = false)
-            enter("READONLY_CONFIG_VERIFIED")
-            return
-        }
-
-        enter("ENTER_OWN_SERVER_BASE_URL")
-        compose.onNodeWithTag("server_base_url").performTextReplacement(requestedInput)
-        compose.onNodeWithTag("save_server").performScrollTo().assertIsEnabled().performClick()
-        compose.waitForIdle()
-        if (exists("confirm_server_change")) {
-            enter("CONFIRM_UNLINKED_TARGET_CHANGE")
-            if (previous == target || exists("logout") || exists("refresh_login")) {
-                enter("EXISTING_LOGIN_REVIEW_REQUIRED"); throw AssertionError()
-            }
-            compose.onNodeWithTag("confirm_server_change").assertIsEnabled().performClick()
-        }
-
-        awaitConfigured("WAIT_NATIVE_CONFIGURE_SAVE")
-        assertOwnConfiguredControls()
-        // Never click telegram_login, refresh_login, request_sync, system dialogs or external UI.
-        enter("COMPLETE_401_AND_NATIVE_CONFIGURED")
+        compose.onNodeWithTag("server_base_url").assertDoesNotExist()
+        compose.onNodeWithTag("save_server").assertDoesNotExist()
+        compose.onNodeWithTag("confirm_server_change").assertDoesNotExist()
+        compose.onAllNodesWithText(URI(target).host, substring = true).assertCountEquals(0)
+        // Do not inspect profile/session values, persisted target, editable text or click account actions.
     }
 
-    private fun assertOwnConfiguredControls(checkSaveButton: Boolean = true) {
-        enter("ASSERT_CONFIG_STATUS_TEXT")
-        // The actual status continues with " · вход ещё не выполнен". Exact matching is wrong.
-        compose.onNodeWithTag("connection_status").performScrollTo()
-            .assertTextContains("Сервер настроен", substring = true)
-        if (checkSaveButton) {
-            enter("ASSERT_SAVE_DISABLED")
-            compose.onNodeWithTag("save_server").assertIsNotEnabled()
-        }
-        enter("ASSERT_LOGIN_ENABLED")
-        compose.onNodeWithTag("telegram_login").performScrollTo().assertExists().assertIsEnabled()
-    }
-
-    private data class UiFlags(
-        val configuredStatusConstant: Boolean,
-        val fieldTargetMatches: Boolean,
-        val saveMergedEnabled: Boolean,
-        val loginMergedEnabled: Boolean,
-        val logoutExists: Boolean,
-        val pendingExists: Boolean,
-        val noticeCode: String,
-    ) {
-        // Login is enabled only when the UI draft equals the persisted connection target and is idle.
-        // Save disabled is checked separately with the standard merged Compose assertion.
-        fun configured() = configuredStatusConstant && fieldTargetMatches && loginMergedEnabled && !logoutExists && !pendingExists
-    }
-
-    private fun ownUiFlags() = UiFlags(
-        ownConfiguredStatus(), ServerBaseUrl.normalize(ownEditableValue()) == target,
-        mergedEnabled("save_server"), mergedEnabled("telegram_login"), exists("logout"), exists("refresh_login"), safeNoticeCode(),
-    )
-
-    private fun report(flags: UiFlags) {
-        // Only booleans/static codes. Never log the underlying text/target/semantics object.
-        Log.i(TAG, "PUBLIC_CONNECTION_DIAGNOSTIC configuredStatusConstant=${flags.configuredStatusConstant}" +
-            " fieldTargetMatches=${flags.fieldTargetMatches} saveMergedEnabled=${flags.saveMergedEnabled}" +
-            " loginMergedEnabled=${flags.loginMergedEnabled} logoutExists=${flags.logoutExists}" +
-            " pendingExists=${flags.pendingExists} noticeCode=${flags.noticeCode}")
-    }
-
-    private fun awaitConfigured(code: String) {
-        enter(code)
-        var last = ownUiFlags()
-        try {
-            compose.waitUntil(20_000) { last = ownUiFlags(); last.configured() }
-        } catch (failure: Throwable) {
-            report(last) // capture while the own Activity still exists, before rule teardown
-            throw failure // outer privacy rule replaces this with a fresh, cause-free error
-        }
-        report(last)
-    }
-
-    /** Keeps only this already-unlocked foreground test window on, never wakes/unlocks the phone. */
-    private fun withOwnDisplayKeptAwake(block: () -> Unit) {
-        val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        var wasSet = false
-        compose.activityRule.scenario.onActivity { activity ->
-            wasSet = activity.window.attributes.flags and flag != 0
-            if (!wasSet) activity.window.addFlags(flag)
-        }
-        try {
-            block()
-        } finally {
-            if (!wasSet) runCatching {
-                compose.activityRule.scenario.onActivity { it.window.clearFlags(flag) }
-            }
-        }
-    }
-
-    private fun exists(tag: String): Boolean = compose.onAllNodesWithTag(tag, useUnmergedTree = true)
-        .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
-
-    // Same merged-tree predicate used by assertIsEnabled(), not Disabled on an unmerged wrapper.
-    private fun mergedEnabled(tag: String): Boolean = compose.onAllNodes(hasTestTag(tag) and isEnabled(), useUnmergedTree = false)
-        .fetchSemanticsNodes(atLeastOneRootRequired = false).size == 1
-
-    private fun ownEditableValue(): String = compose.onAllNodesWithTag("server_base_url", useUnmergedTree = false)
-        .fetchSemanticsNodes(atLeastOneRootRequired = false).singleOrNull()
-        ?.config?.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
-
-    private fun ownConfiguredStatus(): Boolean = compose.onAllNodesWithTag("connection_status", useUnmergedTree = false)
-        .fetchSemanticsNodes(atLeastOneRootRequired = false).singleOrNull()
-        ?.config?.getOrNull(SemanticsProperties.Text)?.any { it.text.contains("Сервер настроен") } == true
-
-    private fun safeNoticeCode(): String {
-        val notices = compose.onAllNodesWithTag("ui_notice", useUnmergedTree = false)
-            .fetchSemanticsNodes(atLeastOneRootRequired = false)
-        if (notices.isEmpty()) return "NONE"
-        val text = notices.singleOrNull()?.config?.getOrNull(SemanticsProperties.Text)
-            ?.joinToString(" ") { it.text } ?: return "NOTICE_PRESENT_UNCLASSIFIED"
-        // Match only known constant UI messages; arbitrary code-like substrings may contain PII.
-        val constants = mapOf(
-            "Не удалось открыть локальное хранилище. Данные не сбрасывались." to "STORAGE_ERROR",
-            "Не удалось подтвердить операцию. Проверьте ввод, данные и доступ к хранилищу." to "LOCAL_ERROR",
-            "Хранилище ещё открывается." to "NOT_READY",
-            "Нужен HTTPS base URL с допустимым необязательным префиксом, без логина, query, fragment и обходов пути." to "INVALID_ORIGIN",
-            "Нужен новый вход. Одноразовый ответ не удалось безопасно восстановить." to "LOGIN_REQUIRED",
-            "Нужно подтвердить новый ручной снимок синхронизации. Старые записи и запросы сохранены." to "CONSENT_RECONFIRM_REQUIRED",
-            "История привязана к другому адресу (включая префикс) или аккаунту. Вернитесь к прежнему серверу либо согласуйте отдельный перенос; автоматической перепривязки/очистки нет." to "ACCOUNT_BINDING_CONFLICT",
-        )
-        constants[text]?.let { return it }
-        for (code in listOf("SECURE_STORAGE", "CLIENT_ERROR", "NOT_READY", "INVALID_RESPONSE", "LOGIN_REQUIRED", "SERVER_NOT_CONFIGURED")) {
-            if (text == "Операция не подтверждена ($code).") return code
-        }
-        return "NOTICE_PRESENT_UNCLASSIFIED"
-    }
-
-    private fun enter(code: String) { stage = code; Log.i(TAG, "PUBLIC_CONNECTION_STAGE_$code") }
-
-    /** Conservative public-unicast sanity check; not a VPN-state detector or routing-table audit. */
+    /** Preserve the native probe's conservative public-unicast guard, independently of renderer policy. */
     private fun isGlobalAddress(address: InetAddress): Boolean {
-        if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
-            address.isSiteLocalAddress || address.isMulticastAddress) return false
+        if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress || address.isSiteLocalAddress || address.isMulticastAddress) return false
         val b = address.address.map { it.toInt() and 255 }
         if (b.size == 4) {
             val a = b[0]; val c = b[1]; val d = b[2]
-            return !(a == 0 || a == 10 || a == 127 || a >= 224 ||
-                (a == 100 && c in 64..127) || (a == 169 && c == 254) || (a == 172 && c in 16..31) ||
+            return !(a == 0 || a == 10 || a == 127 || a >= 224 || (a == 100 && c in 64..127) ||
+                (a == 169 && c == 254) || (a == 172 && c in 16..31) ||
                 (a == 192 && (c == 168 || (c == 0 && d in setOf(0, 2)) || (c == 88 && d == 99))) ||
                 (a == 198 && (c in 18..19 || (c == 51 && d == 100))) || (a == 203 && c == 0 && d == 113))
         }
-        if (b.size != 16 || (b[0] and 0xe0) != 0x20) return false // excludes ULA/link-local/mapped/special ranges
-        if (b[0] == 0x20 && b[1] == 0x02) return false // deprecated 6to4
+        if (b.size != 16 || (b[0] and 0xe0) != 0x20) return false
+        if (b[0] == 0x20 && b[1] == 0x02) return false
         if (b[0] == 0x20 && b[1] == 0x01 && (b[2] < 2 || (b[2] == 0x0d && b[3] == 0xb8))) return false
         return true
     }
-
-    companion object { private const val TAG = "ChronaPublicSmoke" }
 }

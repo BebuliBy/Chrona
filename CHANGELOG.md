@@ -1,5 +1,16 @@
 # История изменений
 
+## 2026-10-18 — установлен чистый UX/автосинхронизация0.3.2
+
+- Убраны служебные подписи/gaps/серверный editor, читаемые часы/минуты/секунды и
+  interval clocks, today markers, компактные «Настройки», заметный Shorts limit.
+- Managed endpoint из сборки сохраняет текущую session/target. Автосинхронизация
+  по аккаунту/default-on, WorkManager+process controller, без popup на каждый upload.
+- Recorded Shorts counter оценивается сразу, partial не блокирует лицо. Жёлтые
+  Canvas emotions/короткие анимации, без Telegram assets. Source guards сохранены.
+- После последнего уточнения **не tests/lint**, только final assembleDebug PASS,
+  install-r3→4 Success/own launch ok. [Полный факт/ограничения](docs/ux-installed-2026-10-18.md).
+
 Здесь только факты внесённых изменений. Планы — в docs/roadmap.md, принятые решения — в docs/decisions.md. Разработка функций не считается выполненной по одному описанию.
 
 ## 2026-10-18 — первая синхронизация владельца

@@ -1,6 +1,12 @@
 package by.bebuliby.chrona.ui
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import by.bebuliby.chrona.domain.*
@@ -105,25 +111,25 @@ class ChronaUiTest {
         compose.onNodeWithTag("archive_habit").assertDoesNotExist()
     }
 
-    @Test fun savingServerDoesNotLoginOrSyncAutomatically() {
+    @Test fun serverEditorIsAbsentAndOpeningSettingsDoesNotChangeConnection() {
         val actions = mutableListOf<ChronaAction>()
         compose.setContent { ChronaApp(DemoState.sample().copy(settingsOpen = true), actions::add) }
-        compose.onNodeWithTag("server_base_url").performScrollTo().performTextReplacement("https://api.chrona.example.org")
-        compose.onNodeWithTag("save_server").performScrollTo().performClick()
-        compose.runOnIdle {
-            assertEquals(listOf(ChronaAction.ConfigureServer("https://api.chrona.example.org")), actions)
-        }
+        compose.onNodeWithTag("server_base_url").assertDoesNotExist()
+        compose.onNodeWithTag("save_server").assertDoesNotExist()
+        compose.onNodeWithTag("confirm_server_change").assertDoesNotExist()
+        compose.runOnIdle { assertTrue(actions.isEmpty()) }
     }
 
-    @Test fun changingOriginRequiresExplicitResetConfirmation() {
+    @Test fun existingAccountAndDestinationAreNotExposedOrReset() {
         val actions = mutableListOf<ChronaAction>()
-        val state = DemoState.sample().copy(settingsOpen = true, connection = ConnectionUiState("https://old.chrona.example.org", false))
+        val sample = DemoState.sample()
+        val state = sample.copy(settingsOpen = true, connection = ConnectionUiState("https://hidden.chrona.example.org:8443", false),
+            profile = sample.profile.copy(accountId = "fixture-account", telegramLinked = true))
         compose.setContent { ChronaApp(state, actions::add) }
-        compose.onNodeWithTag("server_base_url").performScrollTo().performTextReplacement("https://new.chrona.example.org")
-        compose.onNodeWithTag("save_server").performScrollTo().performClick()
+        compose.onNodeWithTag("logout").performScrollTo().assertIsEnabled()
+        compose.onAllNodesWithText("hidden.chrona.example.org", substring = true).assertCountEquals(0)
+        compose.onAllNodesWithText("8443", substring = true).assertCountEquals(0)
         compose.runOnIdle { assertTrue(actions.isEmpty()) }
-        compose.onNodeWithTag("confirm_server_change").performClick()
-        compose.runOnIdle { assertEquals(listOf(ChronaAction.ConfigureServer("https://new.chrona.example.org")), actions) }
     }
 
     @Test fun pendingLoginHasManualRefreshAndNoDuplicateLoginOrAutoSync() {
@@ -143,6 +149,7 @@ class ChronaUiTest {
         compose.setContent { ChronaApp(state, actions::add) }
         compose.onNodeWithTag("request_sync").performScrollTo().performClick()
         compose.onNodeWithTag("confirm_sync").assertIsNotEnabled()
+        compose.onAllNodesWithText("api.chrona.example.org", substring = true).assertCountEquals(0)
         compose.onNodeWithTag("sync_consent_checkbox").performClick()
         compose.onNodeWithTag("cancel_sync").performClick()
         compose.runOnIdle { assertTrue(actions.isEmpty()) }
@@ -164,5 +171,92 @@ class ChronaUiTest {
         compose.runOnIdle { state.value = state.value.copy(connection = ConnectionUiState("https://new.chrona.example.org", false)) }
         compose.onNodeWithTag("confirm_sync").assertIsNotEnabled()
         compose.runOnIdle { assertTrue(actions.isEmpty()) }
+    }
+
+    @Test fun shortsLimitRemainsEditableInMinutesButActualHasNoEditor() {
+        val sample = DemoState.sample()
+        val opened = DemoReducer.reduce(sample, ChronaAction.OpenHabit("shorts", sample.today))
+        val actions = mutableListOf<ChronaAction>()
+        compose.setContent { ChronaApp(opened, actions::add) }
+        compose.onNodeWithTag("edit_actual").assertDoesNotExist()
+        compose.onNodeWithTag("edit_goal").performScrollTo().performClick()
+        compose.onNodeWithText("Минуты").assertExists()
+        compose.onNodeWithTag("number_input").performTextReplacement("1,5")
+        compose.onNodeWithTag("save_number").performClick()
+        compose.runOnIdle {
+            assertEquals(BigDecimal("90000.0"), actions.filterIsInstance<ChronaAction.SaveGoal>().single().amount)
+            assertTrue(actions.none { it is ChronaAction.SaveManualValue })
+        }
+    }
+
+    @Test fun routineSuccessAndHealthyTrackerDoNotDisplayDiagnosticsOrAcknowledgement() {
+        val sample = DemoState.sample()
+        compose.setContent { ChronaApp(sample.copy(mode = DataMode.LOCAL,
+            tracker = TrackerHealth(TrackerStatus.OBSERVING, ScreenObservation.NOT_SHORTS, java.time.Instant.parse("2026-10-18T09:00:00Z")),
+            notice = UiNotice("fixture-notice", "SYNC_SNAPSHOT_COMPLETE", "Подтверждённый снимок отправлен. Новые записи ждут следующего ручного согласия.")), {}) }
+        compose.onNodeWithTag("ui_notice").assertDoesNotExist()
+        for (text in listOf("Понятно", "Служба наблюдения активна", "Последнее состояние", "Последнее наблюдение", "2026-10-18T09:00:00Z"))
+            compose.onAllNodesWithText(text, substring = true).assertCountEquals(0)
+    }
+
+    @Test fun actionableErrorsStayVisibleWithoutRawDebugText() {
+        val actions = mutableListOf<ChronaAction>()
+        compose.setContent { ChronaApp(DemoState.sample().copy(notice = UiNotice("permission", "PERMISSION_REQUIRED", "raw debug details")), actions::add) }
+        compose.onNodeWithTag("ui_notice").assertTextContains("Разрешите отслеживание Shorts")
+        compose.onNodeWithText("raw debug details").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Закрыть сообщение").performClick()
+        compose.runOnIdle { assertEquals(listOf(ChronaAction.DismissNotice("permission")), actions) }
+    }
+
+    @Test fun historyTodayMarkerAndSelectedDateAreIndependent() {
+        val sample = DemoState.sample()
+        val past = sample.today.copy(date = sample.today.date.minusDays(1))
+        compose.setContent { ChronaApp(sample.copy(tab = MainTab.HISTORY, selectedDay = past), {}) }
+        compose.onNodeWithTag("today_marker_${sample.today.date}").assertExists().assertIsNotSelected()
+        compose.onNodeWithTag("calendar_day_${past.date}").assertIsSelected()
+        for (text in listOf("Видны 14 дней", "✓ — выполнение", "известных плановых ячеек"))
+            compose.onAllNodesWithText(text, substring = true).assertCountEquals(0)
+    }
+
+    @Test fun monthTodayMarkerDoesNotDependOnCompletionColor() {
+        val sample = DemoState.sample()
+        val month = sample.history.copy(period = HistoryPeriod.MONTH,
+            range = periodRange(HistoryPeriod.MONTH, sample.today.date, sample.today.zoneId), cells = emptyList())
+        compose.setContent { ChronaApp(sample.copy(tab = MainTab.HISTORY, history = month), {}) }
+        compose.onNodeWithTag("today_marker_${sample.today.date}").assertExists().assertIsSelected()
+    }
+
+    @Test fun settingsTitleUsesOneLineWithALongProfileInNarrowWidth() {
+        val sample = DemoState.sample()
+        compose.setContent { Box(Modifier.width(320.dp)) {
+            ChronaApp(sample.copy(settingsOpen = true, profile = sample.profile.copy(displayName = "Очень длинное имя профиля для проверки ширины")), {})
+        } }
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag("screen_title").assertTextEquals("Настройки")
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        compose.runOnIdle { assertEquals(1, layouts.single().lineCount); assertFalse(layouts.single().isLineEllipsized(0)) }
+    }
+
+    @Test fun todayDateMarkerRemainsVisibleWhenAnotherDayIsSelected() {
+        val sample = DemoState.sample()
+        val actions = mutableListOf<ChronaAction>()
+        compose.setContent { ChronaApp(sample.copy(selectedDay = sample.today.copy(date = sample.today.date.minusDays(1))), actions::add) }
+        compose.onNodeWithTag("today_marker_${sample.today.date}").assertIsNotSelected().performClick()
+        compose.runOnIdle { assertEquals(listOf(ChronaAction.SelectDay(sample.today)), actions) }
+    }
+
+    @Test fun intervalClockAndDurationAreReadableWithoutCoverageOrGapDiagnostics() {
+        val sample = DemoState.sample()
+        val start = java.time.Instant.parse("2026-10-18T06:00:00.001Z")
+        val end = java.time.Instant.parse("2026-10-18T06:01:01.999Z")
+        val interval = IntervalView("fixture-interval", "shorts", start, end, 61_998, IntervalQuality.OBSERVED)
+        val gap = ObservationGap("fixture-gap", "shorts", end, null, GapReason.UNKNOWN_SCREEN)
+        val state = sample.copy(details = HabitDetailsUiState("shorts", sample.todayCells.first(), listOf(interval), listOf(gap)))
+        compose.setContent { ChronaApp(state, {}) }
+        compose.onNodeWithText("09:00:00 → 09:01:01").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("1 мин 1 с").assertIsDisplayed()
+        for (text in listOf("Полнота данных", "Разрывы наблюдения", "Неполное наблюдение", ".999", "2026-10-18T"))
+            compose.onAllNodesWithText(text, substring = true).assertCountEquals(0)
+        compose.runOnIdle { assertEquals(listOf(gap), state.details!!.gaps) }
     }
 }

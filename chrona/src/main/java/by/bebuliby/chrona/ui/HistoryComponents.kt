@@ -2,6 +2,7 @@ package by.bebuliby.chrona.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -22,6 +23,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,6 +61,7 @@ internal fun HistoryPage(
     habits: List<Habit>, history: HistoryUiState, dispatch: (ChronaAction) -> Unit,
     readOnly: Boolean = false, onOpenCell: ((String, DayKey) -> Unit)? = null,
     onSelectHistory: ((HistoryPeriod, DayRange) -> Unit)? = null,
+    today: LocalDate? = null, selectedDate: LocalDate? = null,
 ) {
     var stats by rememberSaveable { mutableStateOf(false) }
     val canNavigate = !readOnly || onSelectHistory != null
@@ -68,7 +71,7 @@ internal fun HistoryPage(
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (readOnly) "Разрешённая история" else "История", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                Text("История", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                 OutlinedButton(onClick = { stats = true }, modifier = Modifier.testTag("open_statistics")) { Text("Статистика") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -96,18 +99,13 @@ internal fun HistoryPage(
         }
         item { PeriodScore(history.summary) }
         if (history.period == HistoryPeriod.YEAR) item {
-            InfoCard("Годовой вид ещё не выбран", "Пользователь пока не определил layout года. Здесь намеренно нет новой heatmap. Кнопка «Статистика» показывает переданные ядром числа и кривые выбранного года.", Modifier.testTag("year_layout_unselected"))
+            InfoCard("Годовой календарь пока недоступен", modifier = Modifier.testTag("year_layout_unselected"))
         } else item {
-            HistoryTable(habits, history) { id, day ->
+            HistoryTable(habits, history, today, selectedDate) { id, day ->
                 onOpenCell?.invoke(id, day) ?: if (!readOnly) dispatch(ChronaAction.OpenHabit(id, day)) else Unit
             }
         }
-        item {
-            Text("✓ — выполнение 100% · × — оценка 0% · частичная оценка — процент. «—» не означает провал, «·» — день без плана.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (history.period == HistoryPeriod.MONTH) Text("Видны 14 дней. Проведите по датам: заголовок и строки перемещаются вместе, названия закреплены.", style = MaterialTheme.typography.bodySmall)
-        }
-        if (habits.isEmpty()) item { InfoCard("Нет доступных привычек", "Таблица не заполняется вымышленными данными.") }
+        if (habits.isEmpty()) item { InfoCard("Нет привычек") }
     }
     if (stats) StatisticsDialog(habits, history, onDismiss = { stats = false })
 }
@@ -119,15 +117,14 @@ internal fun PeriodScore(summary: PeriodSummary) {
             shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().testTag("period_score")) {
             Column(Modifier.padding(16.dp)) {
                 Text("${percent(score.value)} выполнения", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Text("За выбранный период · ${summary.knownCells}/${summary.plannedCells} известных плановых ячеек", style = MaterialTheme.typography.bodySmall)
             }
         }
-        is Computed.Unavailable -> InfoCard("Итог периода недоступен", "${score.reason.label()}. Известно ${summary.knownCells} из ${summary.plannedCells} плановых ячеек. Неизвестное не заменено нулём.", Modifier.testTag("period_unavailable"))
+        is Computed.Unavailable -> InfoCard("Недостаточно данных", modifier = Modifier.testTag("period_unavailable"))
     }
 }
 
 @Composable
-private fun HistoryTable(habits: List<Habit>, history: HistoryUiState, onOpen: (String, DayKey) -> Unit) {
+private fun HistoryTable(habits: List<Habit>, history: HistoryUiState, today: LocalDate?, selectedDate: LocalDate?, onOpen: (String, DayKey) -> Unit) {
     val count = ChronoUnit.DAYS.between(history.range.fromInclusive, history.range.toExclusive).toInt()
     val dates = remember(history.range) { List(count.coerceIn(0, 366)) { history.range.fromInclusive.plusDays(it.toLong()) } }
     val cells = remember(history.cells) { history.cells.associateBy { it.habitId to it.day.date } }
@@ -155,7 +152,14 @@ private fun HistoryTable(habits: List<Habit>, history: HistoryUiState, onOpen: (
             Column(Modifier.width(viewport).horizontalScroll(scroll).testTag("history_scroll")) {
                 Row {
                     dates.forEach { date ->
-                        Column(Modifier.width(width).height(54.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        val marker = calendarDateMarker(date, today, selectedDate)
+                        val shape = MaterialTheme.shapes.extraSmall
+                        val markerBorder = if (marker.isToday) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, shape) else Modifier
+                        Column(Modifier.width(width).height(54.dp).then(markerBorder).clip(shape)
+                            .background(if (marker.isSelected) MaterialTheme.colorScheme.primaryContainer else surface)
+                            .testTag(if (marker.isToday) "today_marker_$date" else "calendar_day_$date")
+                            .semantics { selected = marker.isSelected; contentDescription = "${if (marker.isToday) "Сегодня, " else ""}${dateFormat.format(date)}" },
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Text(date.dayOfMonth.toString(), fontSize = if (monthly) 10.sp else 12.sp, fontWeight = FontWeight.SemiBold)
                             Text(if (monthly) date.monthValue.toString() else listOf("пн", "вт", "ср", "чт", "пт", "сб", "вс")[date.dayOfWeek.value - 1],
                                 fontSize = if (monthly) 9.sp else 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -172,7 +176,7 @@ private fun HistoryTable(habits: List<Habit>, history: HistoryUiState, onOpen: (
                             Box(Modifier.width(width).height(rowHeight).padding(horizontal = 1.dp, vertical = 5.dp)
                                 .clip(MaterialTheme.shapes.extraSmall).background(color)
                                 .clickable { onOpen(habit.id, cell?.day ?: DayKey(date, history.range.zoneId)) }
-                                .semantics { contentDescription = "${habit.title}, ${dateFormat.format(date)}: ${if (cell == null) "нет данных" else coverageLabel(cell.actual)}, выполнение $label" }
+                                .semantics { contentDescription = "${habit.title}, ${dateFormat.format(date)}: ${if (cell == null) "Нет данных" else actualLabel(cell.actual, habit.unit)}, выполнение $label" }
                                 .testTag("cell_${habit.id}_$date"), contentAlignment = Alignment.Center) {
                                 Text(label, color = if (score == null) MaterialTheme.colorScheme.onSurfaceVariant else scoreContentColor(color),
                                     fontSize = if (monthly) 9.sp else 12.sp, fontWeight = FontWeight.SemiBold,
@@ -209,7 +213,7 @@ private fun StatisticsDialog(habits: List<Habit>, history: HistoryUiState, onDis
                             habits.forEach { habit -> DropdownMenuItem(text = { Text(habit.title) }, onClick = { selected = habit.id; chooseCurve = false }) }
                         }
                     } }
-                    item { if (curve != null) CumulativeChart(curve) else InfoCard("Кривая недоступна", "Ядро не передало вычисленную кривую. UI не суммирует разнородные единицы и не подставляет нули.") }
+                    item { if (curve != null) CumulativeChart(curve) else InfoCard("Нет данных для графика") }
                     item { Text("Числа по дням", style = MaterialTheme.typography.titleMedium) }
                     val visible = history.cells.filter { selected == null || it.habitId == selected }.sortedBy { it.day.date }
                     items(visible) { cell ->
@@ -217,16 +221,13 @@ private fun StatisticsDialog(habits: List<Habit>, history: HistoryUiState, onDis
                         if (habit != null) Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small) {
                             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text("${shortDateFormat.format(cell.day.date)} · ${habit.title}", style = MaterialTheme.typography.labelLarge)
-                                Text("${actualLabel(cell.actual, habit.unit)} / ${cell.goal?.let { presentedValue(it.amount, habit.unit) } ?: "—"} ${presentedUnit(habit.unit)}")
-                                Text("Выполнение: ${scoreLabel(cell.score)} · ${when (val usage = cell.usagePercent) {
-                                    is Computed.Ready -> "факт/план ${percent(usage.value)}"
-                                    is Computed.Unavailable -> usage.reason.label()
-                                }}", style = MaterialTheme.typography.bodySmall)
-                                Text(coverageLabel(cell.actual), style = MaterialTheme.typography.bodySmall)
+                                Text(actualGoalLabel(cell, habit.unit))
+                                if (cell.score is Computed.Ready) Text("Выполнение: ${scoreLabel(cell.score)}", style = MaterialTheme.typography.bodySmall)
+                                if (cell.usagePercent is Computed.Ready) Text("Факт / план: ${percent(cell.usagePercent.value)}", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
-                    if (visible.isEmpty()) item { Text("Нет переданных значений за этот период.") }
+                    if (visible.isEmpty()) item { Text("Нет данных") }
                 }
             }
         }
@@ -240,13 +241,11 @@ internal fun CumulativeChart(curve: CumulativeCurve) {
     val axis = MaterialTheme.colorScheme.onSurfaceVariant
     val values = curve.points.mapNotNull { (it.cumulative as? Computed.Ready)?.value }
     val maxAbs = values.maxOfOrNull { it.abs() }?.takeIf { it.signum() > 0 } ?: BigDecimal.ONE
-    val missing = curve.points.mapNotNull { (it.cumulative as? Computed.Unavailable)?.reason }.distinct()
     val runs = contiguousCurveRuns(curve.points)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Накопленное отклонение · ${presentedUnit(curve.unit)}", style = MaterialTheme.typography.titleSmall)
-        Text("0 — точно по плану. Выше — избыток полезного / экономия лимита. Разрывы не соединяются.", style = MaterialTheme.typography.bodySmall)
+        Text("Отклонение от плана · ${axisUnitLabel(curve.unit)}", style = MaterialTheme.typography.titleSmall)
         if (values.isEmpty()) {
-            InfoCard("Нет доступных точек", missing.joinToString("; ") { it.label() }.ifEmpty { "Нет данных" })
+            InfoCard("Нет данных")
         } else {
             Row(Modifier.fillMaxWidth().height(210.dp)) {
                 Column(Modifier.width(64.dp).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
@@ -255,7 +254,7 @@ internal fun CumulativeChart(curve: CumulativeCurve) {
                     Text("−${presentedValue(maxAbs, curve.unit)}", style = MaterialTheme.typography.labelSmall)
                 }
                 Canvas(Modifier.weight(1f).fillMaxHeight().padding(vertical = 8.dp).testTag("cumulative_chart")
-                    .semantics { contentDescription = "Накопленная кривая, ${presentedUnit(curve.unit)}, ось плана ноль, известных точек ${values.size}, разрывов ${curve.points.size - values.size}" }) {
+                    .semantics { contentDescription = "Отклонение от плана, ${axisUnitLabel(curve.unit)}, план — ноль" }) {
                     val zero = size.height / 2
                     drawLine(axis.copy(alpha = .6f), Offset(0f, zero), Offset(size.width, zero), 1.dp.toPx())
                     drawLine(axis.copy(alpha = .3f), Offset.Zero, Offset(0f, size.height), 1.dp.toPx())
@@ -279,13 +278,12 @@ internal fun CumulativeChart(curve: CumulativeCurve) {
                 Text(curve.points.firstOrNull()?.day?.date?.let(shortDateFormat::format) ?: "", style = MaterialTheme.typography.labelSmall)
                 Text(curve.points.lastOrNull()?.day?.date?.let(shortDateFormat::format) ?: "", style = MaterialTheme.typography.labelSmall)
             }
-            if (missing.isNotEmpty()) Text(missing.joinToString("; ") { it.label() }, style = MaterialTheme.typography.bodySmall)
             // An explicit text equivalent for accessibility; year does not eagerly render hundreds of rows.
             TextButton(onClick = { showPointList = !showPointList }) { Text(if (showPointList) "Скрыть значения точек" else "Значения точек кривой") }
             if (showPointList) curve.points.forEach { point ->
                 Text("${shortDateFormat.format(point.day.date)}: ${when (val value = point.cumulative) {
-                    is Computed.Ready -> "${presentedValue(value.value, curve.unit)} ${presentedUnit(curve.unit)}"
-                    is Computed.Unavailable -> value.reason.label()
+                    is Computed.Ready -> measurementLabel(value.value, curve.unit)
+                    is Computed.Unavailable -> "Нет данных"
                 }}", style = MaterialTheme.typography.labelSmall)
             }
         }

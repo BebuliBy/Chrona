@@ -10,20 +10,25 @@ import java.time.ZoneId
 import java.util.UUID
 import java.util.Locale
 
-class ChronaRepository(private val db: ChronaDatabase) {
-    private val dao = db.dao()
+internal interface RepositoryTransactions {
+    suspend fun <T> inTransaction(block: suspend () -> T): T
+}
+
+class ChronaRepository internal constructor(private val dao: ChronaDao, private val transactions: RepositoryTransactions,
+    invalidations: Flow<*>) {
+    constructor(db: ChronaDatabase) : this(db.dao(), object : RepositoryTransactions {
+        override suspend fun <T> inTransaction(block: suspend () -> T): T = db.withTransaction { block() }
+    }, db.invalidationTracker.createFlow("habits", "goals", "manual_entries", "intervals", "segments", "gaps",
+        "tracking_checkpoint", "tracker_health", "outbox", "wire_requests", emitInitialState = true))
     companion object {
         // Stable provisioned UUID, not a demo habit or a fake measurement.
         const val SHORTS_ID = "9b2ef341-bf76-47db-a810-fdf58b95d887"
         fun id(): String = UUID.randomUUID().toString()
     }
     private fun now(): Instant = Instant.ofEpochMilli(System.currentTimeMillis())
-    val facts: Flow<LocalFacts> = db.invalidationTracker.createFlow(
-        "habits", "goals", "manual_entries", "intervals", "segments", "gaps",
-        "tracking_checkpoint", "tracker_health", "outbox", "wire_requests", emitInitialState = true,
-    ).map { snapshot() }
+    val facts: Flow<LocalFacts> = invalidations.map { snapshot() }
 
-    suspend fun snapshot(): LocalFacts = db.withTransaction {
+    suspend fun snapshot(): LocalFacts = transactions.inTransaction {
         LocalFacts(dao.habits().map { it.value }, dao.goals().map { it.value },
             dao.entries().map { it.value }, dao.intervals().map { it.value },
             dao.segments().map { it.value }, dao.gaps().map { it.value },
@@ -31,7 +36,7 @@ class ChronaRepository(private val db: ChronaDatabase) {
             dao.pendingCount() + dao.wireRequests().count { it.outboxId == null })
     }
 
-    suspend fun initialize() = db.withTransaction {
+    suspend fun initialize() = transactions.inTransaction {
         if (dao.habit(SHORTS_ID) == null) {
             val habit = Habit(SHORTS_ID, "YouTube Shorts", ValueUnit("duration_ms", "мс"),
                 GoalDirection.AT_MOST, CollectionMode.AUTOMATIC_SHORTS, now())
@@ -46,7 +51,7 @@ class ChronaRepository(private val db: ChronaDatabase) {
         runCatching { ZoneId.of(day.zoneId) }.getOrElse { throw CoreFailure("VALIDATION", "Неизвестный часовой пояс.") }
     }
 
-    suspend fun create(action: ChronaAction.CreateManualHabit): String = db.withTransaction {
+    suspend fun create(action: ChronaAction.CreateManualHabit): String = transactions.inTransaction {
         day(action.requestedFrom)
         if (action.title.isBlank() || action.title.length > 200 || action.unit.label.isBlank() ||
             action.unit.code.isBlank() || '\u0000' in action.unit.code || '\u0000' in action.unit.label)
@@ -58,7 +63,7 @@ class ChronaRepository(private val db: ChronaDatabase) {
         habit.id
     }
 
-    suspend fun setManual(habitId: String, day: DayKey, value: Decimal) = db.withTransaction {
+    suspend fun setManual(habitId: String, day: DayKey, value: Decimal) = transactions.inTransaction {
         val habit = required(habitId)
         SourcePolicy.manual(habit); SourcePolicy.amount(value); day(day)
         val old = dao.entry(habitId, day)?.value
@@ -69,7 +74,7 @@ class ChronaRepository(private val db: ChronaDatabase) {
             .put("revision", entry.revision ?: JSONObject.NULL), entry.revision)
     }
 
-    suspend fun setGoal(habitId: String, value: Decimal, requestedFrom: DayKey) = db.withTransaction {
+    suspend fun setGoal(habitId: String, value: Decimal, requestedFrom: DayKey) = transactions.inTransaction {
         val habit = required(habitId)
         SourcePolicy.goal(habit, value); day(requestedFrom)
         insertGoal(habit, value, requestedFrom)
@@ -83,7 +88,7 @@ class ChronaRepository(private val db: ChronaDatabase) {
             .put("recordedAt", revision.recordedAt.toString()).put("revision", JSONObject.NULL))
     }
 
-    suspend fun archive(habitId: String) = db.withTransaction {
+    suspend fun archive(habitId: String) = transactions.inTransaction {
         val habit = required(habitId)
         if (habit.collectionMode != CollectionMode.MANUAL)
             throw CoreFailure("SOURCE_NOT_WRITABLE", "Системную активность можно отключить в настройках наблюдения.")
@@ -96,7 +101,7 @@ class ChronaRepository(private val db: ChronaDatabase) {
     suspend fun checkpoint(): TrackingCheckpoint? = dao.checkpoint()?.value
 
     /** Only the collector uses this typed path. No scalar actual/source override exists. */
-    suspend fun record(batch: CollectorBatch) = db.withTransaction {
+    suspend fun record(batch: CollectorBatch) = transactions.inTransaction {
         val habit = required(SHORTS_ID)
         check(habit.collectionMode == CollectionMode.AUTOMATIC_SHORTS)
         for (value in batch.intervals) {

@@ -200,4 +200,5 @@ data class SharingGrantDraft(
 )
 
 enum class SyncStatus { LOCAL_ONLY, IDLE, SYNCING, OFFLINE, ERROR }
-data class SyncState(val status: SyncStatus, val lastSuccessAt: Instant?, val pendingOperations: Int)
+data class SyncState(val status: SyncStatus, val lastSuccessAt: Instant?, val pendingOperations: Int,
+    val automaticEnabled: Boolean = true)

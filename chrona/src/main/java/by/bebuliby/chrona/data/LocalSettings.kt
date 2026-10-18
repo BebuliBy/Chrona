@@ -7,7 +7,14 @@ import androidx.datastore.preferences.preferencesDataStore
 import by.bebuliby.chrona.domain.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import java.util.UUID
+import java.security.MessageDigest
+
+interface AutomaticSyncPreferences {
+    suspend fun automaticEnabled(origin: String, accountId: String): Boolean
+    suspend fun setAutomaticEnabled(origin: String, accountId: String, enabled: Boolean)
+}
 
 private val Context.chronaPreferences: DataStore<Preferences> by preferencesDataStore("chrona_local")
 
@@ -19,7 +26,7 @@ data class LocalSettingsSnapshot(
     val trackingEnabled: Boolean,
 )
 
-class LocalSettings(context: Context) {
+class LocalSettings(context: Context) : AutomaticSyncPreferences {
     private val store = context.applicationContext.chronaPreferences
     private val profile = stringPreferencesKey("profile_id")
     private val device = stringPreferencesKey("device_id")
@@ -49,4 +56,12 @@ class LocalSettings(context: Context) {
     }
     suspend fun photo(uri: String) { store.edit { it[photo] = uri } }
     suspend fun tracking(enabled: Boolean) { store.edit { it[consent] = enabled } }
+    private fun automaticKey(origin: String, accountId: String) = booleanPreferencesKey("automatic_sync_v1_" +
+        MessageDigest.getInstance("SHA-256").digest("$origin\u0000$accountId".toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 255) })
+    override suspend fun automaticEnabled(origin: String, accountId: String): Boolean =
+        store.data.map { it[automaticKey(origin, accountId)] ?: true }.first()
+    override suspend fun setAutomaticEnabled(origin: String, accountId: String, enabled: Boolean) {
+        store.edit { it[automaticKey(origin, accountId)] = enabled }
+    }
 }

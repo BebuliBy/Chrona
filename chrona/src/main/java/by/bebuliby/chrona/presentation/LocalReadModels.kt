@@ -2,6 +2,7 @@ package by.bebuliby.chrona.presentation
 
 import by.bebuliby.chrona.domain.*
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Instant
 import java.time.ZoneId
 
@@ -14,7 +15,7 @@ object LocalReadModels {
         val actual = if (habit.collectionMode == CollectionMode.MANUAL) {
             entry?.let { ActualValue.Known(it.value, FactSource.MANUAL) }
                 ?: ActualValue.Unknown(UnavailableReason.UNKNOWN_ACTUAL)
-        } else observedPartial(habit.id, day, facts, localDeviceId)
+        } else observedAmount(habit.id, day, facts, localDeviceId)
         return Scoring.cell(habit, day, goal, actual)
     }
 
@@ -40,7 +41,9 @@ object LocalReadModels {
         return facts.gaps.filter { it.habitId == habitId && overlaps(it.startUtc, it.endUtc ?: Instant.MAX, start, end) }
     }
 
-    private fun observedPartial(habitId: String, day: DayKey, facts: LocalFacts, localDeviceId: String?): ActualValue {
+    /** Known means the recorded counter value, NOT proof that all hours were observed. */
+    private fun observedAmount(habitId: String, day: DayKey, facts: LocalFacts, localDeviceId: String?): ActualValue {
+        if (day.date > java.time.LocalDate.now(ZoneId.of(day.zoneId))) return ActualValue.Unknown(UnavailableReason.UNKNOWN_ACTUAL)
         val (start, end) = bounds(day)
         val devices = (facts.intervals.filter { it.habitId == habitId && overlaps(it.startUtc, it.endUtc, start, end) }.map { it.deviceId } +
             facts.segments.filter { it.habitId == habitId && overlaps(it.startUtc, it.endUtc, start, end) }.map { it.deviceId }).toMutableSet()
@@ -49,21 +52,35 @@ object LocalReadModels {
         if (open && localDeviceId != null) devices += localDeviceId
         if (devices.size > 1 || (open && localDeviceId == null && devices.isNotEmpty()))
             return ActualValue.Unknown(UnavailableReason.MULTI_DEVICE_UNRESOLVED)
-        val intervals = facts.intervals.filter {
-            it.habitId == habitId && it.quality == IntervalQuality.OBSERVED &&
-                it.startUtc >= start && it.endUtc < end && it.endUtc >= it.startUtc
+        var value = BigDecimal.ZERO
+        var ambiguous = false
+        fun add(a: Instant, b: Instant, duration: Long, quality: IntervalQuality) {
+            if (!overlaps(a, b, start, end)) return
+            if (a >= start && a < end && b >= start && b <= end) {
+                value += BigDecimal(duration.coerceAtLeast(0)); return
+            }
+            if (quality != IntervalQuality.OBSERVED || b <= a) { ambiguous = true; return }
+            // Partition an existing measured millisecond budget by UTC overlap in this explicit zone.
+            // Cumulative floor differences preserve the total across midnight; never grow the budget.
+            val span = BigDecimal(java.time.Duration.between(a, b).toMillis())
+            if (span.signum() <= 0) { ambiguous = true; return }
+            fun cumulative(boundary: Instant): BigDecimal {
+                val offset = java.time.Duration.between(a, boundary.coerceIn(a, b)).toMillis()
+                return BigDecimal(duration.coerceAtLeast(0)).multiply(BigDecimal(offset)).divide(span, 0, RoundingMode.FLOOR)
+            }
+            value += cumulative(end) - cumulative(start)
         }
-        var value = intervals.fold(BigDecimal.ZERO) { total, interval -> total + BigDecimal(interval.durationMillis) }
+        facts.intervals.filter { it.habitId == habitId }.forEach {
+            add(it.startUtc, it.endUtc, it.durationMillis, it.quality)
+        }
         val cp = facts.checkpoint
-        var hasOpen = false
-        if (cp?.observation == ScreenObservation.SHORTS && cp.startWall >= start.toEpochMilli() &&
-            cp.lastWall < end.toEpochMilli() && cp.lastWall >= cp.startWall) {
-            value += BigDecimal((cp.lastElapsed - cp.startElapsed).coerceAtLeast(0))
-            hasOpen = true
+        if (cp?.observation == ScreenObservation.SHORTS) {
+            add(Instant.ofEpochMilli(cp.startWall), Instant.ofEpochMilli(cp.lastWall),
+                (cp.lastElapsed - cp.startElapsed).coerceAtLeast(0), IntervalQuality.OBSERVED)
         }
-        val evidence = facts.segments.any { it.habitId == habitId && overlaps(it.startUtc, it.endUtc, start, end) }
-        return if (intervals.isNotEmpty() || hasOpen || evidence) ActualValue.Partial(value, FactSource.COLLECTOR)
-        else ActualValue.Unknown(UnavailableReason.UNKNOWN_ACTUAL)
+        if (ambiguous) return ActualValue.Unknown(UnavailableReason.DAY_POLICY_UNRESOLVED)
+        // Empty automatic counter is 0 recorded milliseconds. Missing manual entries remain Unknown.
+        return ActualValue.Known(value, FactSource.COLLECTOR)
     }
 
     private fun bounds(day: DayKey): Pair<Instant, Instant> {

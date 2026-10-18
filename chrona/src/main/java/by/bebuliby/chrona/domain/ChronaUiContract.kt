@@ -96,6 +96,7 @@ sealed interface ChronaAction {
     data object RefreshLoginStatus : ChronaAction
     data object Logout : ChronaAction
     data object RequestSync : ChronaAction
+    data class SetAutomaticSync(val enabled: Boolean) : ChronaAction
     data class SearchFriends(val query: String) : ChronaAction
     data class RequestFriend(val accountId: String) : ChronaAction
     data class RespondToFriendRequest(val requestId: String, val accept: Boolean) : ChronaAction

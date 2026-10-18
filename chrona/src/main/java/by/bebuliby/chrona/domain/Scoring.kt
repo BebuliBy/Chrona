@@ -56,19 +56,22 @@ object Scoring {
     }
 
     fun cell(habit: Habit, day: DayKey, goal: GoalRevision?, actual: ActualValue): DayCell {
+        val counted = if (habit.collectionMode == CollectionMode.AUTOMATIC_SHORTS &&
+            actual is ActualValue.Partial && actual.source == FactSource.COLLECTOR)
+            ActualValue.Known(actual.observedValue, FactSource.COLLECTOR) else actual
         val missing = when {
-            actual is ActualValue.Unknown -> actual.reason
-            actual is ActualValue.Partial -> UnavailableReason.PARTIAL_COVERAGE
+            counted is ActualValue.Unknown -> counted.reason
+            counted is ActualValue.Partial -> UnavailableReason.PARTIAL_COVERAGE
             goal == null -> UnavailableReason.GOAL_UNRESOLVED
             else -> null
         }
-        val a = (actual as? ActualValue.Known)?.value
+        val a = (counted as? ActualValue.Known)?.value
         val usage = if (missing != null) Computed.Unavailable(missing)
             else if (goal!!.amount.signum() == 0) Computed.Unavailable(UnavailableReason.ZERO_LIMIT_RATIO)
             else Computed.Ready(a!!.multiply(hundred).divide(goal.amount, mc))
         return DayCell(
             habit.id, day, if (goal == null) PlanStatus.UNRESOLVED else PlanStatus.PLANNED,
-            goal, actual, usage,
+            goal, counted, usage,
             if (missing != null) Computed.Unavailable(missing) else Computed.Ready(score(a!!, goal!!.amount, habit.direction)),
             if (missing != null) Computed.Unavailable(missing) else emotion(a!!, goal!!.amount, habit.direction),
             Computed.Unavailable(UnavailableReason.STREAK_RULES_UNRESOLVED),

@@ -89,24 +89,12 @@ internal fun ProfileAvatar(name: String, photo: ProfilePhoto?, telegramLinked: B
 
 @Composable
 internal fun TrackingCard(tracker: TrackerHealth, dispatch: (ChronaAction) -> Unit) {
+    if (tracker.status !in setOf(TrackerStatus.PERMISSION_REQUIRED, TrackerStatus.UNAVAILABLE, TrackerStatus.NOT_CONNECTED)) return
     Card {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(when (tracker.status) {
-                TrackerStatus.NOT_CONNECTED -> "Отслеживание не подключено"
-                TrackerStatus.DISABLED -> "Отслеживание выключено"
-                TrackerStatus.PERMISSION_REQUIRED -> "Нужно разрешение Android"
-                TrackerStatus.OBSERVING -> "Служба наблюдения активна"
-                TrackerStatus.UNAVAILABLE -> "Наблюдение недоступно"
-            }, style = MaterialTheme.typography.titleSmall)
-            Text(when (tracker.observation) {
-                ScreenObservation.SHORTS -> "Последнее состояние: экран Shorts"
-                ScreenObservation.NOT_SHORTS -> "Последнее состояние: не Shorts. Это не доказательство полного наблюдения дня."
-                ScreenObservation.UNKNOWN -> "Последний экран не распознан. Разрыв не считается просмотром."
-                null -> "Нет подтверждённого состояния экрана. Это не нулевое использование."
-            }, style = MaterialTheme.typography.bodySmall)
-            tracker.lastObservedAt?.let { Text("Последнее наблюдение: $it", style = MaterialTheme.typography.labelSmall) }
-            tracker.reason?.let { Text("Причина: ${it.name.lowercase()}", style = MaterialTheme.typography.labelSmall) }
-            if (tracker.status == TrackerStatus.PERMISSION_REQUIRED) OutlinedButton(onClick = { dispatch(ChronaAction.OpenTrackingPermissionSettings) }) { Text("Открыть разрешения") }
+            Text(if (tracker.status == TrackerStatus.PERMISSION_REQUIRED) "Разрешите отслеживание Shorts" else "Не удаётся отслеживать Shorts",
+                style = MaterialTheme.typography.titleSmall)
+            OutlinedButton(onClick = { dispatch(ChronaAction.OpenTrackingPermissionSettings) }) { Text("Открыть настройки Android") }
         }
     }
 }
@@ -122,14 +110,9 @@ internal fun SettingsPage(state: ChronaUiState, dispatch: (ChronaAction) -> Unit
                         ProfileAvatar(state.profile.displayName, state.profile.photo, state.profile.telegramLinked, true)
                         Column(Modifier.weight(1f)) {
                             Text(state.profile.displayName, style = MaterialTheme.typography.titleLarge)
-                            Text(if (state.profile.telegramLinked) "Telegram привязан" else "Локальный профиль · Telegram не привязан", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     OutlinedButton(onClick = { dispatch(ChronaAction.ChooseProfilePhoto) }, enabled = !state.busy) { Text("Выбрать своё фото") }
-                    Text("Только явно выбранное фото. Локальный URI не отправляется друзьям или на сервер.", style = MaterialTheme.typography.bodySmall)
-                    if (state.profile.photo?.kind == PhotoKind.TELEGRAM_URL && state.profile.telegramLinked) {
-                        Text("Telegram-фото загружается только с разрешённого HTTPS photo-origin без токенов. При недоступности или запрете показан placeholder; можно выбрать своё локальное фото.", style = MaterialTheme.typography.bodySmall)
-                    }
                 }
             }
         }
@@ -137,13 +120,11 @@ internal fun SettingsPage(state: ChronaUiState, dispatch: (ChronaAction) -> Unit
         if (state.profile.telegramLinked && !state.profile.accountId.isNullOrBlank()) item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Text("Находить мой профиль",style=MaterialTheme.typography.titleMedium)
                     Row(verticalAlignment=Alignment.CenterVertically) {
-                        Text("Разрешить находить меня по имени/нику",Modifier.weight(1f))
+                        Text("Находить меня в поиске",Modifier.weight(1f))
                         Switch(checked=state.connection.discoverable,enabled=state.mode == DataMode.CONNECTED && !state.busy && !state.connection.loginPending,
                             onCheckedChange={ dispatch(ChronaAction.ConfigureDiscoverability(it)) },modifier=Modifier.testTag("discoverability"))
                     }
-                    Text("По умолчанию выключено. Это только поиск моего профиля в Chrona, не доступ к статистике и не поиск всех пользователей Telegram. Выключение поиска не удаляет существующих друзей/grants.",style=MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -180,20 +161,15 @@ internal fun SettingsPage(state: ChronaUiState, dispatch: (ChronaAction) -> Unit
                     }, label = { Text(style.title) }, modifier = Modifier.testTag("style_${style.id}"))
                 }
             }
-            if (ChronaDesign.palettes.none { it.id == preferences.paletteId } || ChronaDesign.styles.none { it.id == preferences.styleId }) {
-                Text("Неизвестный вариант показан с безопасным fallback. Сохранённый ID не перезаписан.", style = MaterialTheme.typography.bodySmall)
-            }
-            Text("Системное отключение анимаций учитывается автоматически.", style = MaterialTheme.typography.bodySmall)
         }
         item { TrackingCard(state.tracker, dispatch) }
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Наблюдение Shorts", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text("Отслеживать Shorts", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 Switch(state.tracker.status == TrackerStatus.OBSERVING, enabled = !state.busy,
                     onCheckedChange = { dispatch(ChronaAction.SetTrackingEnabled(it)) }, modifier = Modifier.testTag("tracking_enabled"))
             }
-            Text("Разрешение выдаёте вы в Android. Приложение не включает службу вместо вас и не обходит остановку.", style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { dispatch(ChronaAction.OpenTrackingPermissionSettings) }) { Text("Настройки разрешения Android") }
+            TextButton(onClick = { dispatch(ChronaAction.OpenTrackingPermissionSettings) }) { Text("Разрешения Android") }
         }
     }
 }
@@ -214,24 +190,26 @@ internal fun FriendsPage(state: ChronaUiState, dispatch: (ChronaAction) -> Unit)
             TextButton(enabled = query.isNotBlank() && !state.busy, onClick = { dispatch(ChronaAction.SearchFriends(query.trim())) }) { Text("Найти") }
         }
         if (friends.status == FeatureStatus.NOT_CONNECTED) {
-            InfoCard("Telegram и сервер не подключены", "Здесь нет вымышленных друзей. Поиск, запросы и разрешённая статистика появятся после настоящего подключения.", Modifier.padding(16.dp).testTag("friends_not_connected"))
+            Column(Modifier.padding(16.dp).testTag("friends_not_connected")) {
+                Text("Войдите, чтобы найти друзей")
+                TextButton(onClick = { dispatch(ChronaAction.OpenSettings) }) { Text("Открыть настройки") }
+            }
         } else if (authorized != null) {
             Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(authorized.owner.displayName, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                 TextButton(onClick = { readCell = null; dispatch(ChronaAction.CloseFriend) }) { Text("Свернуть") }
             }
-            Text("Только разрешённые владельцем данные · только чтение", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
             Box(Modifier.weight(1f)) {
                 HistoryPage(authorized.habits, authorized.history, dispatch, readOnly = true, onOpenCell = { id, day ->
                     readCell = authorized.history.cells.find { it.habitId == id && it.day == day }
-                }, onSelectHistory = { _, range -> dispatch(ChronaAction.OpenFriend(authorized.owner.accountId, range)) })
+                }, onSelectHistory = { _, range -> dispatch(ChronaAction.OpenFriend(authorized.owner.accountId, range)) },
+                    today = state.today.date, selectedDate = state.selectedDay.date)
             }
         } else {
             LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (friends.status == FeatureStatus.LOADING) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                if (friends.status == FeatureStatus.ERROR) item { InfoCard("Не удалось загрузить друзей", "Нет подтверждения новых данных. Проверьте подключение и повторите поиск.") }
-                if (searching) item { Text("Находятся только пользователи Chrona, явно включившие поиск своего профиля в настройках. Это не каталог Telegram и не доступ к статистике.",style=MaterialTheme.typography.bodySmall) }
-                if (friends.friends.isEmpty()) item { InfoCard("Список пока пуст", "Взаимная дружба и доступ к активностям требуют подтверждения владельца.") }
+                if (friends.status == FeatureStatus.ERROR) item { InfoCard("Не удалось загрузить друзей", message = "Проверьте соединение и повторите поиск.") }
+                if (friends.friends.isEmpty()) item { InfoCard("Пока нет друзей") }
                 items(friends.friends, key = { it.accountId }) { friend ->
                     FriendRow(friend, state.busy, state.profile.telegramLinked && state.mode == DataMode.CONNECTED, dispatch,
                         onShare = { sharingFor = sharingConsentTarget(state,friend.accountId) }) { dispatch(ChronaAction.OpenFriend(friend.accountId, state.history.range)) }
@@ -261,11 +239,11 @@ private fun FriendRow(friend: FriendSummary, busy: Boolean, remotePhotosEnabled:
             }
             when (friend.relation) {
                 FriendRelation.ACCEPTED -> {
-                    Text("Показать разрешённую статистику →", style = MaterialTheme.typography.labelLarge)
+                    Text("Статистика →", style = MaterialTheme.typography.labelLarge)
                     if (onShare != null) OutlinedButton(enabled=!busy && remotePhotosEnabled,onClick=onShare,
                         modifier=Modifier.testTag("share_with_${friend.accountId}")) { Text("Поделиться моими привычками…") }
                 }
-                FriendRelation.OUTGOING -> Text("Запрос отправлен · доступ ещё не открыт")
+                FriendRelation.OUTGOING -> Text("Запрос отправлен")
                 FriendRelation.INCOMING -> friend.requestId?.let { id -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(enabled = !busy, onClick = { dispatch(ChronaAction.RespondToFriendRequest(id, true)) }) { Text("Принять") }
                     TextButton(enabled = !busy, onClick = { dispatch(ChronaAction.RespondToFriendRequest(id, false)) }) { Text("Отклонить") }
@@ -287,10 +265,8 @@ private fun FriendDayDialog(view: FriendActivityUiState, habit: Habit, cell: Day
                 item { TextButton(onClick = onDismiss) { Text("Закрыть") } }
                 item { Text("${view.owner.displayName} · ${dateFormat.format(cell.day.date)}", style = MaterialTheme.typography.titleMedium) }
                 item { HabitTile(habit, cell, onClick = {}) }
-                item { Text("Разрешённые данные · только чтение", style = MaterialTheme.typography.labelLarge) }
                 item { IntervalTimeline(
-                    view.intervals.filter { it.habitId == habit.id && it.startUtc < end && it.endUtc > start },
-                    view.gaps.filter { it.habitId == habit.id && it.startUtc < end && (it.endUtc == null || it.endUtc > start) }, cell.day.zoneId,
+                    view.intervals.filter { it.habitId == habit.id && it.startUtc < end && it.endUtc > start }, cell.day.zoneId, cell.day.date,
                 ) }
             }
         }

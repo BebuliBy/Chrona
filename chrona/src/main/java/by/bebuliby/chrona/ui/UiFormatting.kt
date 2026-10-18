@@ -6,7 +6,9 @@ import androidx.compose.ui.graphics.luminance
 import by.bebuliby.chrona.domain.*
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.math.MathContext
+import java.math.BigInteger
+import java.time.Instant
+import java.time.ZoneId
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -24,14 +26,66 @@ internal fun parseDayNumber(text: String): BigDecimal? {
 internal fun parseDate(text: String): LocalDate? = runCatching { LocalDate.parse(text.trim()) }.getOrNull()
 internal fun BigDecimal.number(): String = stripTrailingZeros().toPlainString().replace('.', ',')
 internal fun percent(value: BigDecimal): String = "${value.setScale(1, RoundingMode.HALF_UP).number()}%"
+/** Display only: truncate subsecond remainder, but never turn a nonzero duration into 0 seconds. */
+internal fun durationLabel(milliseconds: BigDecimal): String {
+    val magnitude = milliseconds.abs()
+    val sign = if (milliseconds.signum() < 0) "−" else ""
+    if (magnitude.signum() == 0) return "0 с"
+    if (magnitude < BigDecimal(1000)) return "${sign}<1 с"
+    val seconds = magnitude.divideToIntegralValue(BigDecimal(1000)).toBigInteger()
+    val hours = seconds / BigInteger.valueOf(3600)
+    val minutes = seconds % BigInteger.valueOf(3600) / BigInteger.valueOf(60)
+    val rest = seconds % BigInteger.valueOf(60)
+    return sign + listOfNotNull(
+        hours.takeIf { it.signum() > 0 }?.let { "$it ч" },
+        minutes.takeIf { it.signum() > 0 }?.let { "$it мин" },
+        rest.takeIf { it.signum() > 0 }?.let { "$it с" },
+    ).joinToString(" ")
+}
 internal fun presentedValue(value: BigDecimal, unit: ValueUnit): String =
-    if (unit.code == "duration_ms") value.divide(BigDecimal(60_000), MathContext(6, RoundingMode.HALF_UP)).number() else value.number()
-internal fun presentedUnit(unit: ValueUnit): String = if (unit.code == "duration_ms") "мин" else if (unit.code == "plan_shares") "доли плана" else unit.label
+    if (unit.code == "duration_ms") durationLabel(value) else value.number()
+internal fun presentedUnit(unit: ValueUnit): String = when (unit.code) {
+    "duration_ms" -> ""
+    "plan_shares" -> "доли плана"
+    else -> unit.label
+}
+internal fun measurementLabel(value: BigDecimal, unit: ValueUnit): String =
+    listOf(presentedValue(value, unit), presentedUnit(unit)).filter { it.isNotBlank() }.joinToString(" ")
+internal fun axisUnitLabel(unit: ValueUnit): String = if (unit.code == "duration_ms") "время" else presentedUnit(unit)
 internal fun actualLabel(actual: ActualValue, unit: ValueUnit): String = when (actual) {
     is ActualValue.Known -> presentedValue(actual.value, unit)
-    is ActualValue.Partial -> "≥ ${presentedValue(actual.observedValue, unit)}"
-    is ActualValue.Unknown -> "—"
+    is ActualValue.Partial -> if (actual.source == FactSource.COLLECTOR && unit.code == "duration_ms")
+        presentedValue(actual.observedValue, unit) else "≥ ${presentedValue(actual.observedValue, unit)}"
+    is ActualValue.Unknown -> "Нет данных"
 }
+internal fun actualGoalLabel(cell: DayCell?, unit: ValueUnit): String =
+    "${cell?.let { actualLabel(it.actual, unit) } ?: "Нет данных"} / ${cell?.goal?.let { presentedValue(it.amount, unit) } ?: "—"}" +
+        presentedUnit(unit).takeIf { it.isNotBlank() }?.let { " $it" }.orEmpty()
+
+/** Minute editor is independent of the human-readable h/min/s display. Preserve untouched raw facts. */
+internal fun numberEditorText(value: BigDecimal?, unit: ValueUnit): String = value?.let {
+    if (unit.code == "duration_ms") it.divide(BigDecimal(60_000), java.math.MathContext.DECIMAL128).stripTrailingZeros().toPlainString()
+    else it.toPlainString()
+}.orEmpty()
+internal fun numberEditorValue(text: String, initial: BigDecimal?, unit: ValueUnit): BigDecimal? {
+    val parsed = parseDayNumber(text) ?: return null
+    return if (initial != null && text == numberEditorText(initial, unit)) initial
+    else if (unit.code == "duration_ms") parsed.multiply(BigDecimal(60_000)) else parsed
+}
+
+internal fun intervalTimeLabel(start: Instant, end: Instant, zoneId: String, day: LocalDate? = null): String {
+    val zone = runCatching { ZoneId.of(zoneId) }.getOrDefault(ZoneId.systemDefault())
+    val a = start.atZone(zone); val b = end.atZone(zone)
+    val clock = DateTimeFormatter.ofPattern("HH:mm:ss")
+    val date = DateTimeFormatter.ofPattern(if (a.year != b.year || day != null && a.year != day.year) "dd.MM.yyyy" else "dd.MM")
+    val first = if (a.toLocalDate() == day || day == null && a.toLocalDate() == b.toLocalDate()) clock.format(a) else "${date.format(a)} ${clock.format(a)}"
+    val last = if (b.toLocalDate() == a.toLocalDate()) clock.format(b) else "${date.format(b)} ${clock.format(b)}"
+    return "$first → $last"
+}
+
+internal data class CalendarDateMarker(val isToday: Boolean, val isSelected: Boolean)
+internal fun calendarDateMarker(date: LocalDate, today: LocalDate?, selected: LocalDate?): CalendarDateMarker =
+    CalendarDateMarker(date == today, date == selected)
 
 /** This interpolates an already-derived score. It never derives score from facts. */
 internal fun periodScoreColor(score: BigDecimal): Color {
@@ -60,29 +114,6 @@ internal fun scoreLabel(score: Computed<BigDecimal>): String = when (score) {
         }
     }
     is Computed.Unavailable -> if (score.reason == UnavailableReason.NOT_PLANNED) "·" else "—"
-}
-
-internal fun UnavailableReason.label(): String = when (this) {
-    UnavailableReason.UNKNOWN_ACTUAL -> "Нет достоверного значения"
-    UnavailableReason.PARTIAL_COVERAGE -> "Неполное наблюдение"
-    UnavailableReason.NOT_PLANNED -> "Не запланировано"
-    UnavailableReason.SCHEDULE_UNRESOLVED -> "Расписание ещё не определено"
-    UnavailableReason.GOAL_UNRESOLVED -> "План для этого дня не определён"
-    UnavailableReason.DAY_POLICY_UNRESOLVED -> "Правило границ дня ещё не выбрано"
-    UnavailableReason.MULTI_DEVICE_UNRESOLVED -> "Сумма нескольких устройств не определена"
-    UnavailableReason.ZERO_LIMIT_RATIO -> "При нулевом лимите отношение не вычисляется"
-    UnavailableReason.ZERO_LIMIT_EMOTION_UNRESOLVED -> "Эмоция нулевого лимита ещё не выбрана"
-    UnavailableReason.ZERO_LIMIT_CURVE_UNRESOLVED -> "Кривая нулевого лимита ещё не определена"
-    UnavailableReason.STREAK_RULES_UNRESOLVED -> "Правила серий ещё не определены"
-    UnavailableReason.SHARING_POLICY_UNRESOLVED -> "Область доступа ещё не разрешена"
-    UnavailableReason.NOT_CONNECTED -> "Сервер не подключён"
-    UnavailableReason.NOT_IMPLEMENTED -> "Функция ещё не подключена"
-}
-
-internal fun coverageLabel(actual: ActualValue): String = when (actual) {
-    is ActualValue.Known -> "Известное значение · ${if (actual.source == FactSource.MANUAL) "ручная запись" else "наблюдение системы"}"
-    is ActualValue.Partial -> "Измерена только часть дня. Это не окончательный итог."
-    is ActualValue.Unknown -> actual.reason.label()
 }
 
 /** An unavailable point splits a path. Never bridge across missing coverage. */

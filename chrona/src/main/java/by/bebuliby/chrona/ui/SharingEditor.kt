@@ -28,15 +28,12 @@ internal fun SharingEditor(state: ChronaUiState, target: SharingConsentTarget, d
                 Text("Поделиться моими привычками",style = MaterialTheme.typography.titleLarge)
                 LazyColumn(Modifier.weight(1f),verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     item {
-                        Text("Это НОВЫЙ набор, не отображение текущего grant. Сохранение ЗАМЕНЯЕТ прежний набор для этого друга. Пустой набор отзывает доступ к моим активностям.")
-                        Text("Друг увидит разрешённые данные, включая точные интервалы. Дружба сама по себе ничего не открывает. Вход и эта форма не отправляют локальную историю вместо отдельного согласия sync.",style = MaterialTheme.typography.bodySmall)
-                        Text("Сервер: ${target.origin}",style = MaterialTheme.typography.labelSmall)
+                        Text("Выбранные привычки заменят прежний набор доступа. Пустой выбор отзовёт доступ. Друг увидит значения и точные интервалы за выбранный период.")
                         Text("Друг: ${state.friends.friends.find { it.accountId == target.friendId }?.displayName ?: target.friendId}")
                     }
                     item { OutlinedTextField(from,{ from = it },singleLine=true,label={ Text("С даты включительно · YYYY-MM-DD") },modifier=Modifier.fillMaxWidth().testTag("sharing_from")) }
                     item { OutlinedTextField(to,{ to = it },singleLine=true,label={ Text("До даты НЕ включительно · YYYY-MM-DD") },modifier=Modifier.fillMaxWidth().testTag("sharing_to")) }
-                    item { OutlinedTextField(zone,{ zone = it },singleLine=true,label={ Text("Часовой пояс IANA") },modifier=Modifier.fillMaxWidth().testTag("sharing_zone")) }
-                    item { Text("Выберите только свои активности. Ничего не отмечено автоматически.",style=MaterialTheme.typography.bodySmall) }
+                    item { OutlinedTextField(zone,{ zone = it },singleLine=true,label={ Text("Часовой пояс") },modifier=Modifier.fillMaxWidth().testTag("sharing_zone")) }
                     items(state.habits,key={ it.id }) { habit ->
                         Row(verticalAlignment=Alignment.CenterVertically) {
                             Checkbox(habit.id in selected,onCheckedChange={ checked -> selected = if (checked) selected + habit.id else selected - habit.id },enabled=current,
@@ -45,13 +42,12 @@ internal fun SharingEditor(state: ChronaUiState, target: SharingConsentTarget, d
                         }
                     }
                     item {
-                        if (!current) Text("Аккаунт, сервер или дружба изменились. Закройте форму и начните заново.",color=MaterialTheme.colorScheme.error)
-                        if (explicitSharingWindow(from,to,zone) == null) Text("Нужны обе корректные даты, конец позже начала и явный часовой пояс.",style=MaterialTheme.typography.bodySmall)
+                        if (!current) Text("Подключение изменилось. Откройте форму заново.",color=MaterialTheme.colorScheme.error)
+                        if ((from.isNotBlank() || to.isNotBlank()) && explicitSharingWindow(from,to,zone) == null) Text("Проверьте даты и часовой пояс.",style=MaterialTheme.typography.bodySmall)
                         Row(verticalAlignment=Alignment.CenterVertically) {
                             Checkbox(consent,onCheckedChange={ consent = it },enabled=current,modifier=Modifier.testTag("sharing_consent"))
                             Text("Подтверждаю замену набора и указанный период доступа",Modifier.weight(1f),style=MaterialTheme.typography.bodySmall)
                         }
-                        Text("Успех подтверждает сервер. Конфликт revision не перезаписывается принудительно.",style=MaterialTheme.typography.bodySmall)
                     }
                 }
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {

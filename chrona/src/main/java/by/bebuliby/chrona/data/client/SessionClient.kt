@@ -12,6 +12,7 @@ import java.util.Locale
 
 data class RemoteProfile(val accountId: String, val displayName: String, val telegramLinked: Boolean, val discoverable: Boolean = false)
 data class AuthView(val origin: String = "", val loginPending: Boolean = false, val profile: RemoteProfile? = null)
+internal enum class BootstrapOutcome { NOT_SUPPLIED, APPLIED, PRESERVED, BLOCKED_EXISTING_BINDING }
 
 /** All token use/rotation/config changes serialized. Never sends a credential across origins. */
 class SessionClient(private val transport: HttpTransport, private val vault: SessionVault,
@@ -40,6 +41,16 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
         if (origin == connection.origin) return@withLock false
         // Deliberately no old credentials sent even to revoke at the newly selected server.
         persist(PrivateConnection(origin)); true
+    }
+    /** First-configuration only. Never calls configure(), which intentionally clears an old session. */
+    internal suspend fun bootstrap(raw: String, canBootstrap: suspend () -> Boolean): BootstrapOutcome = mutex.withLock {
+        if (connection.origin.isNotBlank() || connection.session != null || connection.pending != null)
+            return@withLock BootstrapOutcome.PRESERVED
+        if (raw.isBlank()) return@withLock BootstrapOutcome.NOT_SUPPLIED
+        val target = ServerOrigin.parse(raw) // same runtime guard as UI/transport/vault, no fake fallback
+        if (!canBootstrap()) return@withLock BootstrapOutcome.BLOCKED_EXISTING_BINDING
+        persist(PrivateConnection(target))
+        BootstrapOutcome.APPLIED
     }
     suspend fun begin(deviceId: String): String = mutex.withLock {
         if (connection.origin.isBlank()) throw ClientFailure("SERVER_NOT_CONFIGURED")

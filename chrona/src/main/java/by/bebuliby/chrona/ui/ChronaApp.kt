@@ -102,12 +102,15 @@ private fun ChronaContent(state: ChronaUiState, dispatch: (ChronaAction) -> Unit
                     Text("Chrona", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
                     Text(
                         when { state.settingsOpen -> "Настройки"; state.details != null -> "За день"; else -> state.tab.title() },
-                        style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
+                        style = if (state.settingsOpen) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("screen_title"),
                     )
                 }
                 Box {
                     Row(
-                        Modifier.widthIn(max = 190.dp).clickable { profileMenu = true }.padding(6.dp).testTag("profile_menu"),
+                        Modifier.widthIn(max = if (state.settingsOpen || state.details != null) 96.dp else 160.dp)
+                            .clickable { profileMenu = true }.padding(6.dp).testTag("profile_menu"),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
                         ProfileAvatar(state.profile.displayName, state.profile.photo, state.profile.telegramLinked)
@@ -150,28 +153,30 @@ private fun ChronaContent(state: ChronaUiState, dispatch: (ChronaAction) -> Unit
                 color = MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.small,
             ) {
                 Column(Modifier.padding(12.dp)) {
-                    Text("Дизайн-превью · демоданные", style = MaterialTheme.typography.labelLarge)
-                    Text("Не ваша статистика. Изменения только в памяти.", style = MaterialTheme.typography.bodySmall)
+                    Text("Демоданные", style = MaterialTheme.typography.labelLarge)
                 }
             }
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("busy_indicator"))
             state.notice?.let { notice ->
-                Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+                userNoticeMessage(notice)?.let { message ->
+                Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(notice.message, Modifier.weight(1f).testTag("ui_notice"), style = MaterialTheme.typography.bodySmall)
-                        TextButton(onClick = { dispatch(ChronaAction.DismissNotice(notice.id)) }) { Text("Понятно") }
+                        Text(message, Modifier.weight(1f).testTag("ui_notice"), style = MaterialTheme.typography.bodySmall)
+                        IconButton(onClick = { dispatch(ChronaAction.DismissNotice(notice.id)) }) { Icon(Icons.Outlined.Close, "Закрыть сообщение") }
                     }
+                }
                 }
             }
             Box(Modifier.weight(1f)) {
                 when {
                     state.settingsOpen -> SettingsPage(state, dispatch)
                     state.details != null && detailHabit != null -> HabitDetails(
-                        detailHabit, state.details, state.busy, dispatch, activeCommit, progress,
+                        detailHabit, state.details, state.busy, dispatch, activeCommit, progress, today = state.today.date,
                     )
-                    state.details != null -> InfoCard("Данные недоступны", "Привычка отсутствует в разрешённом состоянии. Закройте детали и обновите данные.")
+                    state.details != null -> InfoCard("Нет данных")
                     state.tab == MainTab.TODAY -> TodayPage(state, dispatch, activeCommit, progress)
-                    state.tab == MainTab.HISTORY -> HistoryPage(state.habits, state.history, dispatch)
+                    state.tab == MainTab.HISTORY -> HistoryPage(state.habits, state.history, dispatch,
+                        today = state.today.date, selectedDate = state.selectedDay.date)
                     state.tab == MainTab.HABITS -> HabitsPage(state, dispatch, activeCommit, progress)
                     else -> FriendsPage(state, dispatch)
                 }
@@ -184,13 +189,9 @@ private fun ChronaContent(state: ChronaUiState, dispatch: (ChronaAction) -> Unit
 @Composable
 private fun TodayPage(state: ChronaUiState, dispatch: (ChronaAction) -> Unit, commit: ValueCommit?, progress: Float) {
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(LocalChronaStyle.current.spacing)) {
-        item {
-            Text(dateFormat.format(state.selectedDay.date), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Каждый день — новый шаг", style = MaterialTheme.typography.titleLarge)
-        }
-        item { DaySelector(state.selectedDay) { dispatch(ChronaAction.SelectDay(it)) } }
-        item { TrackingCard(state.tracker, dispatch) }
-        if (state.habits.isEmpty()) item { InfoCard("Здесь будут ваши привычки", "Создайте первую во вкладке «Привычки». Нет записи — не означает нулевое выполнение.") }
+        item { DaySelector(state.selectedDay, state.today.date) { dispatch(ChronaAction.SelectDay(it)) } }
+        if (state.tracker.status in setOf(TrackerStatus.PERMISSION_REQUIRED, TrackerStatus.UNAVAILABLE, TrackerStatus.NOT_CONNECTED)) item { TrackingCard(state.tracker, dispatch) }
+        if (state.habits.isEmpty()) item { InfoCard("Пока нет привычек", message = "Добавьте привычку во вкладке «Привычки».") }
         items(state.habits.filter { it.archivedAt == null }, key = { it.id }) { habit ->
             val cell = state.todayCells.find { it.habitId == habit.id && it.day == state.selectedDay }
             HabitTile(habit, cell, commit, progress) {
@@ -203,23 +204,22 @@ private fun TodayPage(state: ChronaUiState, dispatch: (ChronaAction) -> Unit, co
 @Composable
 private fun HabitsPage(state: ChronaUiState, dispatch: (ChronaAction) -> Unit, commit: ValueCommit?, progress: Float) {
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(LocalChronaStyle.current.spacing)) {
-        item { InfoCard("Маленькие действия, ваш ритм", "Полезные привычки — достигать минимума. Для ограничений — оставаться не выше лимита. Число можно записать в деталях за выбранный день.") }
         items(state.habits.filter { it.archivedAt == null }, key = { it.id }) { habit ->
             HabitTile(habit, state.todayCells.find { it.habitId == habit.id && it.day == state.selectedDay }, commit, progress) {
                 dispatch(ChronaAction.OpenHabit(habit.id, state.selectedDay))
             }
         }
-        if (state.habits.none { it.archivedAt == null }) item { InfoCard("Пока нет привычек", "Нажмите «Новая привычка», чтобы добавить свою, без готовых вымышленных серий.") }
+        if (state.habits.none { it.archivedAt == null }) item { InfoCard("Пока нет привычек") }
         item { Spacer(Modifier.height(90.dp)) }
     }
 }
 
 @Composable
-internal fun InfoCard(title: String, message: String, modifier: Modifier = Modifier) {
+internal fun InfoCard(title: String, modifier: Modifier = Modifier, message: String = "") {
     Card(modifier.fillMaxWidth(), border = if (LocalChronaStyle.current.outlined) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null) {
         Column(Modifier.padding(LocalChronaStyle.current.spacing), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

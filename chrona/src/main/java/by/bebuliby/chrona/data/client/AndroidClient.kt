@@ -2,6 +2,7 @@ package by.bebuliby.chrona.data.client
 
 import by.bebuliby.chrona.data.LocalSettings
 import by.bebuliby.chrona.data.LocalSettingsSnapshot
+import by.bebuliby.chrona.data.AutomaticSyncPreferences
 import by.bebuliby.chrona.data.WireRow
 import by.bebuliby.chrona.data.UploadScopeRow
 import by.bebuliby.chrona.domain.*
@@ -16,76 +17,148 @@ import java.util.UUID
 data class ClientView(val baseUrl: String = "", val loginPending: Boolean = false,
     val profile: RemoteProfile? = null, val syncStatus: SyncStatus = SyncStatus.LOCAL_ONLY,
     val lastSuccessAt: Instant? = null, val friends: FriendsUiState = FriendsUiState(FeatureStatus.NOT_CONNECTED),
-    val notice: UiNotice? = null)
+    val notice: UiNotice? = null, val automaticEnabled: Boolean = true)
 
 class AndroidClient internal constructor(val auth: SessionClient, private val store: ClientSyncStore,
-                    private val identities: Flow<LocalSettingsSnapshot>, private val scope: CoroutineScope) {
-    constructor(auth: SessionClient, store: ClientSyncStore, settings: LocalSettings, scope: CoroutineScope) :
-        this(auth, store, settings.snapshots, scope)
+                    private val identities: Flow<LocalSettingsSnapshot>, private val scope: CoroutineScope,
+                    private val automaticPreferences: AutomaticSyncPreferences = MemoryAutomaticSyncPreferences(),
+                    private val scheduleBackground: () -> Unit = {}, private val cancelBackground: () -> Unit = {}) {
+    constructor(auth: SessionClient, store: ClientSyncStore, settings: LocalSettings, scope: CoroutineScope,
+                scheduleBackground: () -> Unit = {}, cancelBackground: () -> Unit = {}) :
+        this(auth, store, settings.snapshots, scope, settings, scheduleBackground, cancelBackground)
     private val mutable = MutableStateFlow(ClientView())
     val state = mutable.asStateFlow()
     private val syncMutex = Mutex()
     private var backoff = 5_000L
+    private var initialized = false
+    private var automaticSignal: Job? = null
+    private var lastAutomaticError: String? = null
 
-    suspend fun initialize() {
+    suspend fun initialize(bootstrapBaseUrl: String = "") {
         scope.launch { auth.state.collect { a -> mutable.update { it.copy(baseUrl = a.origin,
             loginPending = a.loginPending, profile = a.profile,
-            friends = if (a.profile == null) FriendsUiState(FeatureStatus.NOT_CONNECTED) else it.friends) } } }
+            friends = if (a.profile == null) FriendsUiState(FeatureStatus.NOT_CONNECTED) else it.friends) }
+            if (a.profile != null) {
+                try { updateMeta(); signalAutomaticSync() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { automaticFailure(error) }
+            }
+        } }
         try {
             auth.initialize()
+            if (auth.bootstrap(bootstrapBaseUrl, store::canBootstrapUnconfiguredProfile) == BootstrapOutcome.BLOCKED_EXISTING_BINDING)
+                throw ClientFailure("BOOTSTRAP_EXISTING_BINDING")
             if (auth.hasSession()) auth.me()
             else if (auth.state.value.loginPending) auth.refreshLogin()
             updateMeta()
-            if (store.meta()?.errorCode == "CONSENT_RECONFIRM_REQUIRED") notify(ClientFailure("CONSENT_RECONFIRM_REQUIRED"))
         } catch (error: Exception) { notify(error) }
+        initialized = true
+        signalAutomaticSync()
         scope.launch {
             while (isActive) {
                 delay(backoff)
                 try {
                     if (auth.hasSession()) {
                         retrySocial()
-                        val m = store.meta()
-                        if (m?.uploadEnabled == true && m.errorCode == null) retryApproved()
+                        runAutomaticCycle()
                     }
                     backoff = 30_000
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (error: Exception) { notify(error); backoff = (backoff * 2).coerceAtMost(120_000) }
+                catch (error: Exception) { automaticFailure(error); backoff = (backoff * 2).coerceAtMost(120_000) }
             }
         }
     }
     suspend fun configure(url: String) {
-        if (auth.configure(url)) {
-            store.pauseConsent()
-            mutable.update { ClientView(baseUrl = auth.state.value.origin) }
-        }
+        ManagedServerConfiguration.rejectUserEdit()
     }
     suspend fun beginLogin(): String = auth.begin(identities.first { it.deviceId.isNotEmpty() }.deviceId)
     suspend fun refreshLogin() {
         auth.refreshLogin()
+        signalAutomaticSync()
         if (auth.state.value.profile != null) refreshFriends()
         updateMeta()
     }
     suspend fun logout() {
+        cancelBackground()
         store.pauseConsent()
         try { auth.logout() } finally { mutable.update { ClientView(baseUrl = auth.state.value.origin) } }
     }
     suspend fun requestSync() {
-        if (!syncMutex.tryLock()) throw ClientFailure("SYNC_IN_PROGRESS")
+        if (!auth.hasSession()) throw ClientFailure("LOGIN_REQUIRED")
+        val meta = store.meta() ?: throw ClientFailure("LOGIN_REQUIRED")
+        if (!automaticPreferences.automaticEnabled(meta.origin, meta.accountId)) throw ClientFailure("AUTOMATIC_SYNC_DISABLED")
+        runAutomaticCycle() // compatibility "now", never a manual-consent popup or a permission bypass
+    }
+    suspend fun setAutomaticSync(enabled: Boolean) {
+        val meta = store.meta() ?: throw ClientFailure("LOGIN_REQUIRED")
+        val view = auth.state.value
+        if (view.origin != meta.origin || (view.profile != null && view.profile.accountId != meta.accountId))
+            throw ClientFailure("ACCOUNT_BINDING_CONFLICT")
+        automaticPreferences.setAutomaticEnabled(meta.origin, meta.accountId, enabled)
+        mutable.update { it.copy(automaticEnabled = enabled) }
+        if (!enabled) {
+            automaticSignal?.cancel(); cancelBackground(); store.pauseConsent()
+            mutable.update { it.copy(syncStatus = SyncStatus.LOCAL_ONLY) }
+        } else signalAutomaticSync()
+    }
+    /** Throttled producer/login signal: frequent checkpoint/events do not create a 100ms sender loop. */
+    fun signalAutomaticSync() {
+        if (!initialized || automaticSignal?.isActive == true) return
+        automaticSignal = scope.launch {
+            delay(10_000)
+            try {
+                if (!auth.hasSession()) return@launch
+                val meta = store.meta() ?: return@launch
+                if (!automaticPreferences.automaticEnabled(meta.origin, meta.accountId)) return@launch
+                scheduleBackground()
+                runAutomaticCycle()
+            }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { automaticFailure(error) }
+        }
+    }
+    /** Returns true when a constrained Worker should retry a remaining bounded slice. */
+    suspend fun runAutomaticCycle(): Boolean {
+        if (!syncMutex.tryLock()) return true
         try {
-            val target = auth.state.value
-            val p = target.profile ?: throw ClientFailure("LOGIN_REQUIRED")
-            val profile = identities.first { it.profileId.isNotBlank() }
-            // Capture BEFORE HTTP, under the same mutex that handles double taps/retry cycles.
-            val approved = store.approveSnapshot(target.origin, p.accountId, profile.profileId)
-            syncApproved(approved)
+            if (!auth.hasSession()) return false
+            var meta = store.meta()
+            if (meta == null) { auth.me(); meta = store.meta() }
+            val bound = meta ?: throw ClientFailure("LOGIN_REQUIRED")
+            if (bound.origin != auth.state.value.origin) throw ClientFailure("ACCOUNT_BINDING_CONFLICT")
+            if (!automaticPreferences.automaticEnabled(bound.origin, bound.accountId)) {
+                store.pauseConsent(); updateMeta(); return false
+            }
+            val p = auth.state.value.profile ?: auth.me()
+            SyncWire.binding(bound.origin, bound.accountId, auth.state.value.origin, p.accountId)
+            if (bound.errorCode in setOf("REVISION_CONFLICT", "PULL_LOCAL_CONFLICT", "IDEMPOTENCY_CONFLICT",
+                    "SOURCE_NOT_WRITABLE", "POLICY_UNRESOLVED", "CONSENT_SCOPE_CONFLICT")) {
+                updateMeta(); return false // unresolved data is retained, not LWW/rebased/dropped
+            }
+            val local = identities.first { it.profileId.isNotBlank() }
+            // Snapshot is now an INTERNAL retry/ordering strategy, not one-shot user consent.
+            val approved = store.approveSnapshot(bound.origin, bound.accountId, local.profileId, extendAutomatic = true)
+            val completed = syncApproved(approved)
+            lastAutomaticError = null
+            return !completed || store.hasPendingUploads()
         } finally { syncMutex.unlock() }
     }
-    private suspend fun retryApproved() = syncMutex.withLock {
-        val profile = identities.first { it.profileId.isNotBlank() }
-        val approved = store.scopeForRetry(profile.profileId) ?: return@withLock
-        syncApproved(approved)
+    suspend fun runBackgroundCycle(): Boolean {
+        if (!auth.hasSession()) return false
+        retrySocial()
+        return runAutomaticCycle()
     }
-    private suspend fun syncApproved(approved: UploadScopeRow) {
+    private fun automaticFailure(error: Exception) {
+        val code = (error as? ClientFailure)?.code ?: "CLIENT_ERROR"
+        if (lastAutomaticError != code) { lastAutomaticError = code; notify(error) }
+    }
+    fun backgroundFailure(error: Exception) { automaticFailure(error) }
+    private suspend fun ensureAutomaticAllowed(origin: String, accountId: String) {
+        if (!auth.hasSession()) throw ClientFailure("LOGIN_REQUIRED")
+        if (auth.state.value.origin != origin) throw ClientFailure("ACCOUNT_BINDING_CONFLICT")
+        if (!automaticPreferences.automaticEnabled(origin, accountId)) throw ClientFailure("AUTOMATIC_SYNC_DISABLED")
+    }
+    private suspend fun syncApproved(approved: UploadScopeRow): Boolean {
         val profile = auth.state.value.profile ?: auth.me()
         val meta = store.meta() ?: throw ClientFailure("LOGIN_REQUIRED")
         SyncWire.binding(approved.origin, approved.accountId, auth.state.value.origin, profile.accountId)
@@ -94,28 +167,35 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
             throw ClientFailure("CONSENT_SCOPE_CONFLICT")
         mutable.update { it.copy(syncStatus = SyncStatus.SYNCING) }
         try {
+            var sent = 0
+            val deadline = System.nanoTime() + 90_000_000_000L
             // A prior send may have committed remotely but its response/ack was lost.
             // Replay frozen requests BEFORE pull, so our own echo cannot be mistaken for a local collision.
             for (wire in store.approvedFrozen(approved)) {
                 wire.errorCode?.let { throw ClientFailure(it, 409) }
                 execute(wire, approved)
+                sent++
             }
             pull()
             val device = identities.first { it.deviceId.isNotBlank() }.deviceId
             while (true) {
+                if (sent >= 100 || System.nanoTime() >= deadline) {
+                    updateMeta(); return false // durable unfinished snapshot resumes next scheduled cycle
+                }
                 val wire = store.nextRequest(device, approved) ?: break
                 execute(wire, approved)
+                sent++
             }
             pull()
             if (!store.success(approved)) throw ClientFailure("CONSENT_SCOPE_CONFLICT")
             updateMeta()
-            mutable.update { it.copy(notice = UiNotice(UUID.randomUUID().toString(), "SYNC_SNAPSHOT_COMPLETE",
-                "Подтверждённый снимок отправлен. Новые записи ждут следующего ручного согласия.")) }
+            // Success is represented by sync state/time/pending count, not an intrusive routine notice.
+            return true
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
             val code = (error as? ClientFailure)?.code ?: "CLIENT_ERROR"
             // Transient delivery failure retains a retryable frozen request, hard conflicts remain explicit.
-            if (!retryable(error)) store.error(code)
+            if (!retryable(error) && code != "AUTOMATIC_SYNC_DISABLED") store.error(code)
             mutable.update { it.copy(syncStatus = if (code == "OFFLINE") SyncStatus.OFFLINE else SyncStatus.ERROR) }
             throw error
         }
@@ -139,7 +219,10 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         }
     }
     private suspend fun execute(wire: WireRow, approved: UploadScopeRow? = null) {
-        if (wire.outboxId != null) store.requireApproved(wire, approved ?: throw ClientFailure("CONSENT_REQUIRED"))
+        if (wire.outboxId != null) {
+            ensureAutomaticAllowed(wire.origin, wire.accountId)
+            store.requireApproved(wire, approved ?: throw ClientFailure("CONSENT_REQUIRED"))
+        }
         try {
             val result = auth.authorized(wire.method, wire.path, wire.body, wire.requestId, wire.origin, wire.accountId)
             store.acknowledge(wire, result)
@@ -150,7 +233,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         }
     }
     private suspend fun retrySocial() = syncMutex.withLock {
-        // Does not upload raw data before RequestSync; each social request was itself explicitly submitted.
+        // Explicit social mutations are distinct from the account-bound raw automatic-sync toggle.
         for (wire in store.socialRequests()) {
             if (wire.errorCode == null) execute(wire)
         }
@@ -234,10 +317,14 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
     }
     private suspend fun updateMeta() {
         var m = store.meta()
-        if (auth.state.value.profile != null && m?.errorCode in setOf("LOGIN_REQUIRED", "UNAUTHENTICATED", "OFFLINE", "SERVER_NOT_CONFIGURED")) {
+        val enabled = if (m != null && m.origin == auth.state.value.origin)
+            automaticPreferences.automaticEnabled(m.origin, m.accountId) else true
+        if (auth.state.value.profile != null && m?.errorCode in setOf("LOGIN_REQUIRED", "UNAUTHENTICATED", "OFFLINE", "SERVER_NOT_CONFIGURED",
+                "CONSENT_REQUIRED", "CONSENT_RECONFIRM_REQUIRED")) {
             store.error(null); m = store.meta()
         }
-        mutable.update { it.copy(syncStatus = when {
+        mutable.update { it.copy(automaticEnabled = enabled, syncStatus = when {
+            !enabled -> SyncStatus.LOCAL_ONLY
             m?.errorCode != null -> SyncStatus.ERROR
             auth.state.value.profile != null && (m?.uploadEnabled == true || m?.lastSuccessAt != null) -> SyncStatus.IDLE
             else -> SyncStatus.LOCAL_ONLY
@@ -246,8 +333,10 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
     fun notify(error: Exception) {
         val code = (error as? ClientFailure)?.code ?: "CLIENT_ERROR"
         val message = when (code) {
-            "SERVER_NOT_CONFIGURED" -> "Укажите HTTPS-адрес своего сервера в настройках."
-            "INVALID_ORIGIN" -> "Нужен HTTPS base URL с допустимым необязательным префиксом, без логина, query, fragment и обходов пути."
+            "SERVER_NOT_CONFIGURED" -> "В этой сборке не задан сервер. Локальные данные доступны; нужна сборка с настройкой сервера."
+            "INVALID_ORIGIN" -> "Настройка сервера этой сборки недопустима. Локальные данные сохранены."
+            "BOOTSTRAP_EXISTING_BINDING" -> "Существующая привязка профиля сохранена. Для смены сервера нужен отдельно согласованный перенос, не новая настройка сборки."
+            "SERVER_CONFIGURATION_MANAGED" -> ManagedServerConfiguration.MESSAGE
             "TELEGRAM_NOT_CONFIGURED" -> "На сервере ещё не настроен Telegram-бот. Вход не выполнен."
             "OFFLINE" -> "Сервер недоступен. Локальные данные и очередь сохранены."
             "ACCOUNT_BINDING_CONFLICT" -> "История привязана к другому адресу (включая префикс) или аккаунту. Вернитесь к прежнему серверу либо согласуйте отдельный перенос; автоматической перепривязки/очистки нет."
@@ -256,12 +345,19 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
             "REVISION_CONFLICT", "PULL_LOCAL_CONFLICT", "IDEMPOTENCY_CONFLICT" -> "Конфликт данных. Локальные записи и операция сохранены; автоматической перезаписи нет."
             "POLICY_UNRESOLVED" -> "Для этой операции сервер требует ещё не выбранное правило. Данные не удалены."
             "SOCIAL_PENDING" -> "Предыдущая операция для этой настройки ещё не подтверждена или конфликтует. Новый набор не отправлен; автоматической перезаписи нет."
-            "CONSENT_REQUIRED", "CONSENT_RECONFIRM_REQUIRED" -> "Нужно подтвердить новый ручной снимок синхронизации. Старые записи и запросы сохранены."
-            "CONSENT_SCOPE_CONFLICT" -> "Адрес, профиль или снимок согласия изменился. Передача остановлена без удаления записей."
-            "CONSENT_DEPENDENCY_PENDING" -> "Зависимость записи не входит в подтверждённый снимок и ещё не известна серверу. Дополнительные данные автоматически не отправлены."
-            "SYNC_IN_PROGRESS" -> "Подтверждённый запуск уже выполняется; его снимок не расширен повторным нажатием."
+            "CONSENT_REQUIRED", "CONSENT_RECONFIRM_REQUIRED", "CONSENT_SCOPE_CONFLICT" -> "Привязка или сохранённая очередь изменилась. Передача остановлена без удаления записей."
+            "CONSENT_DEPENDENCY_PENDING" -> "Зависимая запись ещё не готова к отправке. Данные сохранены."
+            "SYNC_IN_PROGRESS" -> "Синхронизация уже выполняется."
+            "AUTOMATIC_SYNC_DISABLED" -> "Автосинхронизация выключена."
             else -> "Операция не подтверждена ($code)."
         }
         mutable.update { it.copy(notice = UiNotice(UUID.randomUUID().toString(), code, message)) }
     }
+}
+
+/** Internal JVM injection default only; the application constructor always uses persistent LocalSettings. */
+private class MemoryAutomaticSyncPreferences : AutomaticSyncPreferences {
+    private val values = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, Boolean>()
+    override suspend fun automaticEnabled(origin: String, accountId: String) = values[origin to accountId] ?: true
+    override suspend fun setAutomaticEnabled(origin: String, accountId: String, enabled: Boolean) { values[origin to accountId] = enabled }
 }

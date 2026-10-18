@@ -18,6 +18,10 @@ class ClientSyncStore internal constructor(private val dao: ChronaDao, private v
         override suspend fun <T> inTransaction(block: suspend () -> T): T = db.withTransaction { block() }
     })
     suspend fun meta() = dao.syncMeta()
+    suspend fun hasPendingUploads(): Boolean = dao.pendingCount() != 0 || dao.wireRequests().any { it.outboxId != null }
+    suspend fun canBootstrapUnconfiguredProfile(): Boolean = transactions.inTransaction {
+        dao.syncMeta() == null && dao.uploadScope() == null && dao.wireRequests().isEmpty()
+    }
     suspend fun socialRequests() = dao.wireRequests().filter { it.outboxId == null }
     suspend fun bind(origin: String, account: String) = transactions.inTransaction {
         val old = dao.syncMeta()
@@ -28,7 +32,8 @@ class ClientSyncStore internal constructor(private val dao: ChronaDao, private v
         // Preserve the old approved IDs/frozen requests for explicit same-target resume, never broaden them.
         dao.syncMeta()?.let { dao.saveSyncMeta(it.copy(uploadEnabled = false)) }
     }
-    suspend fun approveSnapshot(origin: String, accountId: String, localProfileId: String): UploadScopeRow = transactions.inTransaction {
+    suspend fun approveSnapshot(origin: String, accountId: String, localProfileId: String,
+                                extendAutomatic: Boolean = false): UploadScopeRow = transactions.inTransaction {
         val meta = dao.syncMeta() ?: throw ClientFailure("LOGIN_REQUIRED")
         SyncWire.binding(meta.origin, meta.accountId, origin, accountId)
         if (localProfileId.isBlank()) throw ClientFailure("CONSENT_SCOPE_CONFLICT")
@@ -45,7 +50,13 @@ class ClientSyncStore internal constructor(private val dao: ChronaDao, private v
             // Room barrier: raw producer + outbox insert are transactional too. Future IDs are not members.
             dao.saveUploadScope(scope)
             dao.insertApprovals(rows.map { ApprovedUploadRow(it.operationId, scope.scopeId) })
-        } else if (dao.approvals(scope.scopeId).any { it.operationId !in ids }) throw ClientFailure("CONSENT_SCOPE_CONFLICT")
+        } else {
+            val members = dao.approvals(scope.scopeId).map { it.operationId }.toSet()
+            if (members.any { it !in ids }) throw ClientFailure("CONSENT_SCOPE_CONFLICT")
+            // Per-cycle automatic barrier only; frozen request bodies/keys never change.
+            if (extendAutomatic) dao.insertApprovals(rows.filter { it.operationId !in members }
+                .map { ApprovedUploadRow(it.operationId, scope.scopeId) })
+        }
         dao.saveSyncMeta(meta.copy(uploadEnabled = true, errorCode = null))
         scope
     }
@@ -107,13 +118,15 @@ class ClientSyncStore internal constructor(private val dao: ChronaDao, private v
             dao.deleteOutbox(row.operationId)
             dao.deleteApproval(row.operationId)
         }
-        val row = rows.firstOrNull { it.entityType != "habit" || it.entityId != ChronaRepository.SHORTS_ID }
+        var row = rows.firstOrNull { it.entityType != "habit" || it.entityId != ChronaRepository.SHORTS_ID }
             ?: return@inTransaction null
         val payload = JSONObject(row.payload)
         if (row.entityType != "habit" && payload.has("habitId")) {
             val habitId = WireCodec.text(payload, "habitId")
-            if (habitId != ChronaRepository.SHORTS_ID && dao.remote("habit:$habitId") == null)
-                throw ClientFailure("CONSENT_DEPENDENCY_PENDING")
+            if (habitId != ChronaRepository.SHORTS_ID && dao.remote("habit:$habitId") == null) {
+                row = rows.firstOrNull { it.entityType == "habit" && it.entityId == habitId }
+                    ?: throw ClientFailure("CONSENT_DEPENDENCY_PENDING")
+            }
         }
         val revision = dao.remote("${row.entityType}:${row.entityId}")?.revision
         val wire = WireRow(row.operationId, meta.origin, meta.accountId, "POST", "/v1/sync/push",

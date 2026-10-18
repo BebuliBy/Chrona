@@ -2,7 +2,6 @@ package by.bebuliby.chrona.data
 
 import by.bebuliby.chrona.data.client.*
 import by.bebuliby.chrona.domain.*
-import by.bebuliby.chrona.ui.normalizedPublicServerBaseUrl
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.sync.Mutex
@@ -40,24 +39,24 @@ class ClientFixesTest {
     private fun ack(wire: WireRow, revision: String = "100") = JSONObject().put("results", JSONArray().put(JSONObject()
         .put("operationId", wire.outboxId).put("status", "accepted").put("revision", revision)))
 
-    @Test fun uiConfigureSessionTransportShareRootPortAndBasePathContract() = runTest {
+    @Test fun bootstrapSessionTransportShareRootPortAndBasePathContract() = runTest {
         for (input in listOf("$BASE/", "$BASE:8443/", "$BASE:8443/chrona/", "$BASE/chrona/nested/")) {
-            val action = ChronaAction.ConfigureServer(normalizedPublicServerBaseUrl(input)!!)
+            val target = ServerBaseUrl.normalize(input)!!
             val vault = RecordVault()
             val calls = mutableListOf<HttpRequest>()
             val id = UUID.randomUUID().toString()
             val client = SessionClient(HttpTransport { r ->
                 calls += r
-                assertEquals(action.baseUrl + "/v1/auth/telegram/challenges", r.resolvedUrl().toASCIIString())
+                assertEquals(target + "/v1/auth/telegram/challenges", r.resolvedUrl().toASCIIString())
                 HttpReply(201, JSONObject().put("requestId", id).put("expiresAt", "2099-01-01T00:00:00Z")
                     .put("telegramStartUrl", "https://t.me/chrona_bot?start=$id").toString())
             }, vault) { _, _ -> }
-            client.initialize(); client.configure(action.baseUrl); client.begin(DEVICE)
-            assertEquals(action.baseUrl, vault.load().origin)
+            client.initialize(); client.bootstrap(target) { true }; client.begin(DEVICE)
+            assertEquals(target, vault.load().origin)
             assertEquals(1, calls.size)
             assertFalse(calls.single().body!!.contains("codeVerifier"))
             val restored = SessionClient(HttpTransport { throw AssertionError("No automatic network") }, vault) { _, _ -> }
-            restored.initialize(); assertEquals(action.baseUrl, restored.state.value.origin)
+            restored.initialize(); assertEquals(target, restored.state.value.origin)
             assertTrue(restored.state.value.loginPending)
         }
     }
@@ -88,7 +87,7 @@ class ClientFixesTest {
             "$BASE/%252e%252e", "$BASE/a%2fb", "$BASE/a\\b", "$BASE?token=EXAMPLE", "$BASE#x", "https://u:p@api.chrona.example.org",
             "http://api.chrona.example.org", "https://api.telegram.org", "$BASE/token/EXAMPLE")
         for (url in bad) {
-            assertNull(url, normalizedPublicServerBaseUrl(url))
+            assertNull(url, ServerBaseUrl.normalize(url))
             expect("INVALID_ORIGIN") { ServerOrigin.parse(url) }
         }
         for (route in listOf("//evil.example.org/v1/me", "/v1/../me", "/v1/%2e%2e/me", "/v1//me", "/v1/me#x"))
@@ -265,6 +264,11 @@ class ClientFixesTest {
         assertEquals(listOf(first), pushes)
         assertFalse(f.meta.uploadEnabled); assertNull(f.scope)
         assertEquals(setOf(futureGap, futureManual), f.outbox.keys)
+        assertNull(client.state.value.notice) // routine success is state/time/count, not a banner/modal
+        client.notify(ClientFailure("ACCOUNT_BINDING_CONFLICT"))
+        assertEquals("ACCOUNT_BINDING_CONFLICT", client.state.value.notice!!.code)
+        client.notify(ClientFailure("CONSENT_SCOPE_CONFLICT"))
+        assertEquals("CONSENT_SCOPE_CONFLICT", client.state.value.notice!!.code)
     }
     @Test fun cancelledRequestAndProcessRestartRetryOnlyThePreviouslyApprovedSnapshot() = runTest {
         val f = Fixture(); val first = f.addGap()
