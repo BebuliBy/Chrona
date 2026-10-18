@@ -1,0 +1,7 @@
+{
+  "id": "chrona",
+  "prefix": "/",
+  "upstream": "http://localhost:18080",
+  "delegates": [],
+  "origin_file": "/etc/chrona/client-origin"
+}

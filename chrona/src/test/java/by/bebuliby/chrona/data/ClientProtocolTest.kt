@@ -16,7 +16,7 @@ import java.util.UUID
 
 class ClientProtocolTest {
     companion object {
-        private const val ORIGIN = "https://chrona.example.test"
+        private const val ORIGIN = "https://chrona.example.org"
         private const val ACCOUNT = "2dca2539-2b3b-4f68-8a30-feb342c97cfe"
         private const val OTHER = "8c9a89c3-7932-49cb-aee7-ddaf38b8c6a4"
         private const val SESSION = "b7cb049c-debc-40af-8bf6-c518f8dd3311"
@@ -105,10 +105,11 @@ class ClientProtocolTest {
         failure("VALIDATION") { SocialWire.sharing(empty.copy(historyScope=SharingHistoryScope.TimeWindow(Instant.EPOCH,Instant.EPOCH)),null,null) }
     }
 
-    @Test fun originIsExplicitHttpsOriginNotCredentialsPathQueryOrFragment() {
-        assertEquals(ORIGIN, ServerOrigin.parse("HTTPS://CHRONA.EXAMPLE.TEST:443/"))
+    @Test fun originIsExplicitHttpsBaseWithoutCredentialsQueryOrFragment() {
+        assertEquals(ORIGIN, ServerOrigin.parse("HTTPS://CHRONA.EXAMPLE.ORG:443/"))
+        assertEquals("$ORIGIN/chrona", ServerOrigin.parse("$ORIGIN/chrona/"))
         assertEquals("", ServerOrigin.parse(""))
-        for (bad in listOf("http://example.test", "https://u:p@example.test", "https://example.test/path",
+        for (bad in listOf("http://example.test", "https://u:p@example.test", "$ORIGIN/a/../path",
             "https://example.test?x=secret", "https://example.test#x", "https://example.test:0", "https://example.test\\@bad.test"))
             failure("INVALID_ORIGIN") { ServerOrigin.parse(bad) }
     }
@@ -196,7 +197,7 @@ class ClientProtocolTest {
         val vault = MemoryVault(PrivateConnection(ORIGIN, session(), PendingLogin(REQUEST, "v".repeat(43), Instant.MAX)))
         val transport = Fake { throw AssertionError("Origin change must not call network") }
         val client = SessionClient(transport, vault) { _, _ -> }
-        client.initialize(); client.configure("https://different.example.test")
+        client.initialize(); client.configure("https://different.example.org")
         assertNull(vault.value.session); assertNull(vault.value.pending)
         assertFalse(client.state.value.loginPending)
         try { client.authorized("GET", "/v1/me"); fail() } catch (e: ClientFailure) { assertEquals("LOGIN_REQUIRED", e.code) }
@@ -341,11 +342,22 @@ class ClientProtocolTest {
                 try { return block() } finally { transactionActive = false }
             }
         }
-        val meta = SyncMetaRow(origin = ORIGIN, accountId = ACCOUNT, serverShortsId = OTHER, uploadEnabled = true)
+        var meta = SyncMetaRow(origin = ORIGIN, accountId = ACCOUNT, serverShortsId = OTHER)
+        var approval: UploadScopeRow? = null
+        val members = mutableMapOf<String, ApprovedUploadRow>()
         // Runs the actual ClientSyncStore algorithm. Only DAO IO/Room transaction runtime are fakes.
         val dao = Proxy.newProxyInstance(ChronaDao::class.java.classLoader, arrayOf(ChronaDao::class.java)) { _, method, args ->
             when (method.name) {
                 "syncMeta" -> meta
+                "saveSyncMeta" -> { assertTrue(transactionActive); meta = args!![0] as SyncMetaRow; Unit }
+                "uploadScope" -> approval
+                "saveUploadScope" -> { approval = args!![0] as UploadScopeRow; Unit }
+                "deleteUploadScope" -> { approval = null; Unit }
+                "approvals" -> members.values.filter { it.scopeId == args!![0] }
+                "insertApprovals" -> { @Suppress("UNCHECKED_CAST") val rows = args!![0] as List<ApprovedUploadRow>
+                    rows.forEach { members[it.operationId] = it }; Unit }
+                "deleteApproval" -> { members.remove(args!![0] as String); Unit }
+                "deleteApprovals" -> { members.entries.removeAll { it.value.scopeId == args!![0] }; Unit }
                 "outbox" -> outbox.values.toList()
                 "wireRequests" -> wires.values.toList()
                 "remote" -> remotes[args!![0] as String]
@@ -411,24 +423,27 @@ class ClientProtocolTest {
             HttpRequest(wire.origin, wire.method, wire.path, wire.body, idempotencyKey = wire.requestId)).body)
 
         val openOperation = queue(open)
-        val openWire = store.nextRequest(DEVICE)!!
+        val firstConsent = store.approveSnapshot(ORIGIN, ACCOUNT, "local-profile")
+        val openWire = store.nextRequest(DEVICE, firstConsent)!!
         assertTrue(JSONObject(openWire.body).getJSONArray("operations").getJSONObject(0).isNull("baseRevision"))
         store.acknowledge(openWire, send(openWire))
         assertEquals("100", remotes["observation_gap:$REQUEST"]!!.revision)
         assertTrue(outbox.isEmpty()); assertTrue(wires.isEmpty())
         assertEquals(open, dao.gap(REQUEST)!!.value)
+        assertTrue(store.success(firstConsent))
 
         val closed = open.copy(endUtc = start.plusSeconds(30))
         val closeOperation = queue(closed)
         assertNotEquals(openOperation, closeOperation)
-        val closedWire = store.nextRequest(DEVICE)!!
+        val secondConsent = store.approveSnapshot(ORIGIN, ACCOUNT, "local-profile")
+        val closedWire = store.nextRequest(DEVICE, secondConsent)!!
         assertEquals("100", JSONObject(closedWire.body).getJSONArray("operations").getJSONObject(0).getString("baseRevision"))
         send(closedWire) // server committed revision101, but response/local ACK is deliberately lost
         assertTrue(outbox.containsKey(closeOperation))
         val key = "observation_gap:$REQUEST"
         remotes[key] = RemoteRow(key, "101", WireCodec.canonical(serverPayload!!))
         val restartedStore = ClientSyncStore(dao, transaction)
-        val replay = restartedStore.nextRequest(DEVICE)!!
+        val replay = restartedStore.nextRequest(DEVICE, secondConsent)!!
         assertEquals(closedWire.requestId, replay.requestId)
         assertEquals(closedWire.body, replay.body) // still base100, never recomputed as101
         val duplicate = send(replay)

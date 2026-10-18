@@ -14,7 +14,7 @@ class ChronaContainer(application: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val collectorLock = Mutex() // serializes reconnecting service instances until the old actor has flushed
     private val database = Room.databaseBuilder(application, ChronaDatabase::class.java, "chrona-local.db")
-        .addMigrations(ClientMigration.MIGRATION_1_2)
+        .addMigrations(ClientMigration.MIGRATION_1_2, ClientMigration.MIGRATION_2_3)
         .build()
     val repository = ChronaRepository(database)
     val settings = LocalSettings(application)

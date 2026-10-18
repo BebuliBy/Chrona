@@ -32,6 +32,32 @@ interface SessionVault {
     suspend fun save(value: PrivateConnection)
 }
 
+/** Plaintext record codec shared by encrypted storage and JVM round-trip tests; never logged. */
+internal object ConnectionRecordCodec {
+    fun normalize(value: PrivateConnection): PrivateConnection {
+        val target = ServerOrigin.parse(value.origin)
+        if (target.isEmpty() && (value.session != null || value.pending != null)) throw ClientFailure("SECURE_STORAGE")
+        return PrivateConnection(target, value.session, value.pending)
+    }
+    fun decode(text: String): PrivateConnection {
+        val json = JSONObject(text)
+        val s = json.optJSONObject("session"); val p = json.optJSONObject("pending")
+        return normalize(PrivateConnection(json.getString("origin"), s?.let {
+            ClientSession(it.getString("accountId"), it.getString("sessionId"), it.getString("access"),
+                it.getString("refresh"), Instant.parse(it.getString("expiresAt")), it.optBoolean("rotating"))
+        }, p?.let { PendingLogin(it.getString("requestId"), it.getString("verifier"), Instant.parse(it.getString("expiresAt")), it.optBoolean("exchanging")) }))
+    }
+    fun encode(value: PrivateConnection): String {
+        val safe = normalize(value)
+        val json = JSONObject().put("origin", safe.origin)
+        safe.session?.let { json.put("session", JSONObject().put("accountId", it.accountId).put("sessionId", it.sessionId)
+            .put("access", it.access).put("refresh", it.refresh).put("expiresAt", it.expiresAt.toString()).put("rotating", it.rotating)) }
+        safe.pending?.let { json.put("pending", JSONObject().put("requestId", it.requestId).put("verifier", it.verifier)
+            .put("expiresAt", it.expiresAt.toString()).put("exchanging", it.exchanging)) }
+        return json.toString()
+    }
+}
+
 /** Whole secret record atomically encrypted in noBackupFilesDir. No tokens in DataStore/Room/logs. */
 class KeystoreSessionVault(application: Application) : SessionVault {
     private val lock = Mutex()
@@ -56,29 +82,15 @@ class KeystoreSessionVault(application: Application) : SessionVault {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, blob.copyOfRange(1, 13)))
             cipher.updateAAD(aad)
-            val json = JSONObject(cipher.doFinal(blob.copyOfRange(13, blob.size)).toString(Charsets.UTF_8))
-            val s = json.optJSONObject("session")
-            val p = json.optJSONObject("pending")
-            val rawOrigin = json.getString("origin")
-            // Logging out before configuration may persist an empty, secret-free record.
-            // Tokens/verifiers still require a validated bound HTTPS origin.
-            if (rawOrigin.isBlank() && s == null && p == null) return@withContext PrivateConnection()
-            PrivateConnection(ServerOrigin.parse(rawOrigin), s?.let {
-                ClientSession(it.getString("accountId"), it.getString("sessionId"), it.getString("access"),
-                    it.getString("refresh"), Instant.parse(it.getString("expiresAt")), it.optBoolean("rotating"))
-            }, p?.let { PendingLogin(it.getString("requestId"), it.getString("verifier"), Instant.parse(it.getString("expiresAt")), it.optBoolean("exchanging")) })
+            ConnectionRecordCodec.decode(cipher.doFinal(blob.copyOfRange(13, blob.size)).toString(Charsets.UTF_8))
         } catch (_: Exception) { throw ClientFailure("SECURE_STORAGE") }
     } }
     override suspend fun save(value: PrivateConnection) = lock.withLock { withContext(Dispatchers.IO) {
         try {
-            val json = JSONObject().put("origin", value.origin)
-            value.session?.let { json.put("session", JSONObject().put("accountId", it.accountId).put("sessionId", it.sessionId)
-                .put("access", it.access).put("refresh", it.refresh).put("expiresAt", it.expiresAt.toString()).put("rotating", it.rotating)) }
-            value.pending?.let { json.put("pending", JSONObject().put("requestId", it.requestId).put("verifier", it.verifier)
-                .put("expiresAt", it.expiresAt.toString()).put("exchanging", it.exchanging)) }
+            val plaintext = ConnectionRecordCodec.encode(value)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, key()); cipher.updateAAD(aad)
-            val encrypted = byteArrayOf(1) + cipher.iv + cipher.doFinal(json.toString().toByteArray(Charsets.UTF_8))
+            val encrypted = byteArrayOf(1) + cipher.iv + cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
             val stream = file.startWrite()
             try { stream.write(encrypted); file.finishWrite(stream) }
             catch (error: Exception) { file.failWrite(stream); throw error }

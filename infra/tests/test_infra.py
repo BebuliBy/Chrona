@@ -135,6 +135,22 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(serve.unchanged_except_own(before, after, "redacted:443"))
         after["AllowFunnel"]["redacted:443"] = True
         self.assertFalse(serve.unchanged_except_own(before, after, "redacted:443"))
+
+    def test_private_guard_allows_only_exact_owned_public8443(self):
+        import copy
+        before = {"TCP": {"443": {"HTTPS": True}}, "Web": {"redacted:443": {"Handlers": {"/": {"Proxy": "existing"}}}}}
+        after = copy.deepcopy(before)
+        after["Web"]["redacted:443"]["Handlers"]["/chrona"] = {"Proxy": serve.UPSTREAM}
+        after["TCP"]["8443"] = {"HTTPS": True}
+        after["Web"]["redacted:8443"] = {"Handlers": {"/": {"Proxy": "generic-loopback"}}}
+        after["AllowFunnel"] = {"redacted:8443": True}
+        expected = {"TCP": after["TCP"]["8443"], "Web": {"redacted:8443": after["Web"]["redacted:8443"]}, "AllowFunnel": {"redacted:8443": True}}
+        with patch.object(serve, "managed_public_state", return_value=None):
+            self.assertFalse(serve.unchanged_except_own(before, after, "redacted:443"))
+        with patch.object(serve, "managed_public_state", return_value={"owned_port": 8443, "expected_port": expected}):
+            self.assertTrue(serve.unchanged_except_own(before, after, "redacted:443"))
+            after["AllowFunnel"]["redacted:443"] = True
+            self.assertFalse(serve.unchanged_except_own(before, after, "redacted:443"))
     def test_bot_config_default_no_secret_read_no_network(self):
         with patch("sys.argv", ["configure"]), patch.object(bot_config, "token_path", side_effect=AssertionError("secret")), patch.object(bot_config, "docker", side_effect=AssertionError("docker")), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(bot_config.main(), 0)

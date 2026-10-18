@@ -10,6 +10,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import javax.net.ssl.HttpsURLConnection
+import by.bebuliby.chrona.domain.ServerBaseUrl
 
 class ClientFailure(rawCode: String, val httpStatus: Int = 0) : IOException("Chrona client request failed") {
     val code = rawCode.takeIf { it in codes } ?: "SERVER_ERROR"
@@ -21,21 +22,25 @@ class ClientFailure(rawCode: String, val httpStatus: Int = 0) : IOException("Chr
             "REDIRECT_REJECTED", "REQUEST_TOO_LARGE", "RESPONSE_TOO_LARGE", "SYNC_REJECTED", "PULL_LOCAL_CONFLICT",
             "PULL_LIMIT", "UNSUPPORTED_PAGINATION", "REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT", "POLICY_UNRESOLVED",
             "CURSOR_RESNAPSHOT_REQUIRED", "TELEGRAM_NOT_CONFIGURED", "NOT_CONFIGURED", "NOT_IMPLEMENTED", "NOT_READY",
-            "UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND", "VALIDATION", "RATE_LIMITED", "LOGIN_NOT_CONFIRMED")
+            "UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND", "VALIDATION", "RATE_LIMITED", "LOGIN_NOT_CONFIRMED",
+            "CONSENT_REQUIRED", "CONSENT_RECONFIRM_REQUIRED", "CONSENT_SCOPE_CONFLICT", "CONSENT_DEPENDENCY_PENDING", "SYNC_IN_PROGRESS")
     }
 }
 
 object ServerOrigin {
     fun parse(input: String): String {
-        val raw = input.trim()
-        if (raw.isEmpty()) return ""
-        val uri = try { URI(raw) } catch (_: Exception) { throw ClientFailure("INVALID_ORIGIN") }
-        if (raw.length > 2048 || !uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.rawUserInfo != null ||
-            uri.rawQuery != null || uri.rawFragment != null || uri.rawPath !in listOf("", "/") ||
-            uri.port !in -1..65535 || uri.port == 0 || raw.any { it.isISOControl() } || '\\' in raw)
-            throw ClientFailure("INVALID_ORIGIN")
-        val host = uri.host.lowercase()
-        return "https://$host" + if (uri.port in listOf(-1, 443)) "" else ":${uri.port}"
+        if (input.trim().isEmpty()) return ""
+        return ServerBaseUrl.normalize(input) ?: throw ClientFailure("INVALID_ORIGIN")
+    }
+    /** API routes stay relative to the application mount, never URI.resolve (which drops a prefix). */
+    fun requestUrl(baseUrl: String, route: String): URI {
+        val base = parse(baseUrl)
+        val api = try { URI(route) } catch (_: Exception) { throw ClientFailure("INVALID_ORIGIN") }
+        val path = api.rawPath.orEmpty()
+        if (base.isEmpty() || api.scheme != null || api.rawAuthority != null || api.rawFragment != null ||
+            !path.startsWith("/v1/") || "//" in path || '%' in path || '\\' in route ||
+            route.any { it.isISOControl() } || path.split('/').any { it == "." || it == ".." }) throw ClientFailure("INVALID_ORIGIN")
+        return URI(base + route)
     }
     fun telegram(input: String, requestId: String): String {
         val u = try { URI(input) } catch (_: Exception) { throw ClientFailure("UNSAFE_LOGIN_URL") }
@@ -56,6 +61,7 @@ object Pkce {
 
 class HttpRequest(val origin: String, val method: String, val path: String,
                   val body: String? = null, val bearer: String? = null, val idempotencyKey: String? = null) {
+    fun resolvedUrl(): URI = ServerOrigin.requestUrl(origin, path)
     override fun toString() = "HttpRequest(redacted)"
 }
 class HttpReply(val status: Int, val body: String) { override fun toString() = "HttpReply($status,redacted)" }
@@ -63,10 +69,7 @@ fun interface HttpTransport { suspend fun execute(request: HttpRequest): HttpRep
 
 class HttpsTransport : HttpTransport {
     override suspend fun execute(request: HttpRequest): HttpReply = withContext(Dispatchers.IO) {
-        val origin = ServerOrigin.parse(request.origin)
-        if (origin.isEmpty() || !request.path.startsWith("/v1/") || request.path.startsWith("//") ||
-            request.path.any { it.isISOControl() }) throw ClientFailure("INVALID_ORIGIN")
-        val connection = URI(origin + request.path).toURL().openConnection() as HttpsURLConnection
+        val connection = request.resolvedUrl().toURL().openConnection() as HttpsURLConnection
         try {
             connection.instanceFollowRedirects = false
             connection.useCaches = false

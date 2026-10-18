@@ -33,6 +33,7 @@ HOST_CP="${COMPILER[0]}:${STDLIB[0]}:${COROUTINES[0]}:${ANNOTATIONS[0]}"
     chrona/src/main/java/by/bebuliby/chrona/data/client/*.kt \
     chrona/src/main/java/by/bebuliby/chrona/tracking/*.kt \
     chrona/src/main/java/by/bebuliby/chrona/presentation/*.kt \
+    chrona/src/main/java/by/bebuliby/chrona/ui/ServerUrlInput.kt \
     chrona/build/generated/ksp/debug/kotlin/by/bebuliby/chrona/data/*.kt
 "$JAVA" -cp "$HOST_CP" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
     -no-stdlib -no-reflect -jvm-target 17 -Xfriend-paths=chrona/build/core-android-check.jar -classpath "chrona/build/core-android-check.jar:$CP" \
@@ -46,4 +47,5 @@ HOST_CP="${COMPILER[0]}:${STDLIB[0]}:${COROUTINES[0]}:${ANNOTATIONS[0]}"
     by.bebuliby.chrona.tracking.TrackingEngineTest \
     by.bebuliby.chrona.presentation.LocalReadModelsTest \
     by.bebuliby.chrona.data.RawConvertersTest \
-    by.bebuliby.chrona.data.ClientProtocolTest
+    by.bebuliby.chrona.data.ClientProtocolTest \
+    by.bebuliby.chrona.data.ClientFixesTest

@@ -159,3 +159,11 @@
 - После явного подтверждения owner USB/unlock desktop подтвердил одну authorized SM-A376E/Android16/API36, сверил APK metadata/signature и выполнил install-r:0.2.0-ui/code1→0.3.0-local/code2, Success. Uninstall/clear/downgrade/автовыдачи permissions не было.
 - Собственная MainActivity cold launch Statusok, живой ownprocess/resumed/focus подтверждены. Tailscale установлен, но активное подключение/HTTPS/API пока не доказаны. UI/private DB/vault/чужие apps не читались; ни login, ни sync, ни сообщения не инициировались.
 - Код/APK не менялся/не пересобирался. Следом owner Tailscale/явный HTTPS baseURL и настоящее подтверждение входа по generated Telegram link; данные/секреты/serial/privatehostname в Git не добавлялись.
+
+## 2026-10-18 — standalone public gateway и клиент0.3.1
+
+- Generic Funnel publication tool создан отдельно: source `/home/niki/public-gateway`, runtime `/opt/public-gateway`, registry/state `/etc/public-gateway`. CLI consumers register/validate/plan/apply/status/remove; application imports/hardcoded Chrona logic отсутствуют, новый GitHub repo не создавался.
+- Только public8443/root первогоconsumer, private443/Nextcloud сохранён; native handlers/ETagCAS/allowlist/rootdelegation/backup/scopedremove. Generic14local/server иappguard34 PASS, external relayDNS/TLS/200/401/negativeNextcloud/443TLSdeny PASS. Один transientrepeatfailedнеустановленнойпричины, затемполныйPASSбезизменений; beta/SLAограниченияне скрыты. Apprepo храниттолько consumer/doc/guard,неgeneric source.
+- UI/core/vault/transport baseURL mismatch исправлен общим strict guard, safe prefix/customport поддержаны, guards/TLS/PKCE не ослаблены. Prefix change — новый target/login scope.
+- One-shot sync consent фиксирует exactoperationIDs/target/account/profile; будущие записи ждутновогосогласия, retryтолькоapprovedsubset, ACK/frozen/lastsuccessатомарны. Schema3/MIGRATION2_3 не очищаетraw/outbox/frozen, отключаетlegacyunboundedflag.125Androidunit/SQLite5 PASS,lint0err17warn.
+- APKcode3/0.3.1-fix собран/install-r2→3/launchPASS. Одинnative smoke compiled(nofixtures/secretreads/login/sync); phonepreflight OWNER_UNLOCK_REQUIRED,0device tests/testAPKнеустановлен/network/configsaveнепроверены. Testпослеunlockдержиттолькосвоёforegroundwindowkeep-screen-on сfinallyrestore, безglobaltimeout/wakeup/unlock/VPNchanges. Реальныйphone/TG/syncE2Eещёнеpassed.

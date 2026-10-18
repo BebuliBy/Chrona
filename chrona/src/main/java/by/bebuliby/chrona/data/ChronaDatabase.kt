@@ -81,6 +81,14 @@ data class AppliedRow(@PrimaryKey val revision: String)
 data class WireRow(@PrimaryKey val requestId: String, val origin: String, val accountId: String,
     val method: String, val path: String, val body: String, val outboxId: String?, val errorCode: String? = null)
 
+/** Approval metadata only: raw outbox/payloads are never edited to extend a consent scope. */
+@Entity(tableName = "upload_scopes")
+data class UploadScopeRow(@PrimaryKey val id: String = "main", val scopeId: String, val origin: String,
+    val accountId: String, val localProfileId: String)
+
+@Entity(tableName = "approved_uploads", indices = [Index("scopeId")])
+data class ApprovedUploadRow(@PrimaryKey val operationId: String, val scopeId: String)
+
 @Dao
 interface ChronaDao {
     @Query("SELECT * FROM habits ORDER BY createdAt, id") suspend fun habits(): List<HabitRow>
@@ -122,12 +130,19 @@ interface ChronaDao {
     @Query("UPDATE goals SET revision = :revision WHERE id = :id") suspend fun goalRevision(id: String, revision: String)
     @Query("SELECT * FROM manual_entries WHERE id = :id") suspend fun entryById(id: String): ManualRow?
     @Query("SELECT * FROM gaps WHERE id = :id") suspend fun gap(id: String): GapRow?
+    @Query("SELECT * FROM upload_scopes WHERE id = 'main'") suspend fun uploadScope(): UploadScopeRow?
+    @Upsert suspend fun saveUploadScope(row: UploadScopeRow)
+    @Query("DELETE FROM upload_scopes WHERE id = 'main'") suspend fun deleteUploadScope()
+    @Query("SELECT * FROM approved_uploads WHERE scopeId = :scopeId") suspend fun approvals(scopeId: String): List<ApprovedUploadRow>
+    @Insert suspend fun insertApprovals(rows: List<ApprovedUploadRow>)
+    @Query("DELETE FROM approved_uploads WHERE operationId = :operationId") suspend fun deleteApproval(operationId: String)
+    @Query("DELETE FROM approved_uploads WHERE scopeId = :scopeId") suspend fun deleteApprovals(scopeId: String)
 }
 
 @Database(entities = [HabitRow::class, GoalRow::class, ManualRow::class, IntervalRow::class,
     SegmentRow::class, GapRow::class, CheckpointRow::class, HealthRow::class, OutboxRow::class,
-    SyncMetaRow::class, RemoteRow::class, AppliedRow::class, WireRow::class],
-    version = 2, exportSchema = true)
+    SyncMetaRow::class, RemoteRow::class, AppliedRow::class, WireRow::class, UploadScopeRow::class, ApprovedUploadRow::class],
+    version = 3, exportSchema = true)
 @TypeConverters(RawConverters::class)
 abstract class ChronaDatabase : RoomDatabase() {
     abstract fun dao(): ChronaDao

@@ -1,5 +1,7 @@
 # Chrona — интеграционный checkpoint 2026-10-18
 
+**Latest public/fix:** standalone Public Gateway (`/home/niki/public-gateway`, `/opt/public-gateway`) публикует только8443, Chrona первый root consumer, private443 сохранён. External matrix PASS, generic14/appguards34 PASS. Общий HTTPSbaseURL/one-shot consent исправлены, schema3/migration2→3;125Androidunit/SQLite5 PASS,lint0err17warn. APKcode3/0.3.1-fix installed-r/launchPASS.14instrumentation compiled, native smoke пока0runs — OWNER_UNLOCK_REQUIRED. Предыдущие schema2/unit112 ниже — история исходного checkpoint. [Текущий итог](public-gateway-checkpoint-2026-10-18.md), [consumer](../infra/public-gateway-integration.md), [fixes](client-fixes-2026-10-18.md).
+
 Это отчёт о **написанном/собранном коде и реально развёрнутом server checkpoint**, не заявление о завершении всего продукта или phone/Telegram E2E.
 
 **Последующая активация 2026-10-18:** owner выполнил hidden token install; sysadmin проверил metadata/getMe/getWebhookInfo через SOCKS/TLS и включил ровно один healthy worker, затем API auth. Real successful poll/SQL lease/offset наблюдались, прежние DB/proxy/Nextcloud/HTTPS mappings сохранены. Сообщений и login от агента не было; phone/owner auth/sync/friends E2E ещё ожидаются.

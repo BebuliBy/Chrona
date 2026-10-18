@@ -12,8 +12,8 @@ android {
         applicationId = "by.bebuliby.chrona"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.3.0-local"
+        versionCode = 3
+        versionName = "0.3.1-fix"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {

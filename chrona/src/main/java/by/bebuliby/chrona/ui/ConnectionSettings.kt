@@ -39,12 +39,12 @@ internal fun ConnectionSettings(state: ChronaUiState, dispatch: (ChronaAction) -
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
                 isError = draft.isNotBlank() && normalized == null, modifier = Modifier.fillMaxWidth().testTag("server_base_url"),
                 supportingText = { Text("Без пароля, токена, userinfo, query или fragment. Адрес проверяется повторно ядром.") })
-            Text("Смена origin (домен / порт) сбрасывает вход и незавершённый запрос входа. Локальные записи не удаляются и не отправляются при сохранении адреса.",
+            Text("Смена адреса (домен / порт / base path) сбрасывает вход и незавершённый запрос входа. Локальные записи не удаляются и не отправляются при сохранении адреса.",
                 style = MaterialTheme.typography.bodySmall)
             if (dirty) Text("Адрес ещё не сохранён. Сначала сохраните его или верните прежний, затем начинайте вход.", style = MaterialTheme.typography.bodySmall)
             Button(enabled = normalized != null && dirty && !state.busy, modifier = Modifier.testTag("save_server"), onClick = {
                 normalized?.let { next ->
-                    if (serverOrigin(connection.baseUrl) != serverOrigin(next) &&
+                    if (saved != next &&
                         (connection.baseUrl.isNotBlank() || state.profile.telegramLinked || connection.loginPending)) confirmUrl = next
                     else dispatch(ChronaAction.ConfigureServer(next))
                 }
@@ -66,7 +66,7 @@ internal fun ConnectionSettings(state: ChronaUiState, dispatch: (ChronaAction) -
     confirmUrl?.let { target ->
         val stillCurrent = normalized == target && !state.busy
         AlertDialog(onDismissRequest = { confirmUrl = null }, title = { Text("Сменить сервер и сбросить вход?") },
-            text = { Text("Новый origin: ${serverOrigin(target)}\nТекущий вход и ожидающий запрос будут сброшены. Токены не переносятся на новый origin. Локальные записи останутся на устройстве; эта кнопка не запускает синхронизацию.") },
+            text = { Text("Новый сервер: $target\nТекущий вход и ожидающий запрос будут сброшены. Токены не переносятся на другой сервер или префикс. Локальные записи останутся на устройстве; эта кнопка не запускает синхронизацию.") },
             confirmButton = { TextButton(enabled = stillCurrent, modifier = Modifier.testTag("confirm_server_change"), onClick = {
                 if (stillCurrent) { dispatch(ChronaAction.ConfigureServer(target)); confirmUrl = null }
             }) { Text("Сменить сервер") } },

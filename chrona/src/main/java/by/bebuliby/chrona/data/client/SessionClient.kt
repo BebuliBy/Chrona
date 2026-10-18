@@ -22,7 +22,7 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
     val state = mutable.asStateFlow()
 
     suspend fun initialize() = mutex.withLock {
-        connection = vault.load()
+        connection = ConnectionRecordCodec.normalize(vault.load())
         // A rotating/consuming request may already have succeeded remotely. Never replay a one-use secret.
         if (connection.session?.rotating == true || connection.pending?.exchanging == true) {
             persist(PrivateConnection(connection.origin))

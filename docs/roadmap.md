@@ -21,6 +21,7 @@
 
 ## Выполненный checkpoint 2026-10-18 — актуальнее прежней таблицы плана
 
+- **Latest public/fix:** standalone gateway/Chrona consumer8443/private443 unchanged/external matrix PASS; generic14/appguards34 PASS.125Androidunit/SQLite5/0err17warn, APK0.3.1-fix/code3 installed-r/launchPASS.14instrumentation compiled, nativeprobe0runs — OWNER_UNLOCK_REQUIRED. После ownerunlock/Tailscaleoff — native config/TLS, затем настоящий login. [Итог](public-gateway-checkpoint-2026-10-18.md).
 - UI-v2/12 палитр/3 стиля/7 эмоций/explicit numeric overgoal/week-month/statistics реализованы, main/test APK собраны. LOCAL использует Room schema2/DataStore/collector, не fixtures.
 - Android client PKCE/Keystore/sync/restore/friends и explicit discovery/sharing реализован; backend80 tests, Chrona104+spike8 unit tests, infra30, SQLite3 PASS. Lint0errors17warnings,13instrumentation только compiled. Runtime phone/Keystore/Room приёмка не проведена.
 - Server Xray10808/private Docker/Postgres/API/HTTPS `/chrona` работают; proxy/reconnect/JDBC/backuprestore/legacy checks PASS. Owner hidden token-install и verified worker/API auth activation **выполнены**: один worker healthy/live poll progression. Infra33tests PASS; следующий owner шаг — phone/tailnet/настоящий login/sync/social E2E, не повторный BotFather.

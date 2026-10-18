@@ -1,7 +1,9 @@
 package by.bebuliby.chrona.data.client
 
 import by.bebuliby.chrona.data.LocalSettings
+import by.bebuliby.chrona.data.LocalSettingsSnapshot
 import by.bebuliby.chrona.data.WireRow
+import by.bebuliby.chrona.data.UploadScopeRow
 import by.bebuliby.chrona.domain.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -16,8 +18,10 @@ data class ClientView(val baseUrl: String = "", val loginPending: Boolean = fals
     val lastSuccessAt: Instant? = null, val friends: FriendsUiState = FriendsUiState(FeatureStatus.NOT_CONNECTED),
     val notice: UiNotice? = null)
 
-class AndroidClient(val auth: SessionClient, private val store: ClientSyncStore,
-                    private val settings: LocalSettings, private val scope: CoroutineScope) {
+class AndroidClient internal constructor(val auth: SessionClient, private val store: ClientSyncStore,
+                    private val identities: Flow<LocalSettingsSnapshot>, private val scope: CoroutineScope) {
+    constructor(auth: SessionClient, store: ClientSyncStore, settings: LocalSettings, scope: CoroutineScope) :
+        this(auth, store, settings.snapshots, scope)
     private val mutable = MutableStateFlow(ClientView())
     val state = mutable.asStateFlow()
     private val syncMutex = Mutex()
@@ -32,6 +36,7 @@ class AndroidClient(val auth: SessionClient, private val store: ClientSyncStore,
             if (auth.hasSession()) auth.me()
             else if (auth.state.value.loginPending) auth.refreshLogin()
             updateMeta()
+            if (store.meta()?.errorCode == "CONSENT_RECONFIRM_REQUIRED") notify(ClientFailure("CONSENT_RECONFIRM_REQUIRED"))
         } catch (error: Exception) { notify(error) }
         scope.launch {
             while (isActive) {
@@ -40,7 +45,7 @@ class AndroidClient(val auth: SessionClient, private val store: ClientSyncStore,
                     if (auth.hasSession()) {
                         retrySocial()
                         val m = store.meta()
-                        if (m?.uploadEnabled == true && m.errorCode == null) sync()
+                        if (m?.uploadEnabled == true && m.errorCode == null) retryApproved()
                     }
                     backoff = 30_000
                 } catch (cancelled: CancellationException) { throw cancelled }
@@ -50,48 +55,62 @@ class AndroidClient(val auth: SessionClient, private val store: ClientSyncStore,
     }
     suspend fun configure(url: String) {
         if (auth.configure(url)) {
-            store.consent(false)
+            store.pauseConsent()
             mutable.update { ClientView(baseUrl = auth.state.value.origin) }
         }
     }
-    suspend fun beginLogin(): String = auth.begin(settings.snapshots.first { it.deviceId.isNotEmpty() }.deviceId)
+    suspend fun beginLogin(): String = auth.begin(identities.first { it.deviceId.isNotEmpty() }.deviceId)
     suspend fun refreshLogin() {
         auth.refreshLogin()
         if (auth.state.value.profile != null) refreshFriends()
         updateMeta()
     }
     suspend fun logout() {
-        store.consent(false)
+        store.pauseConsent()
         try { auth.logout() } finally { mutable.update { ClientView(baseUrl = auth.state.value.origin) } }
     }
     suspend fun requestSync() {
-        val p = auth.me()
-        store.bind(auth.state.value.origin, p.accountId)
-        store.consent(true) // explicit RequestSync is first-upload consent, login alone is not
-        store.error(null) // explicit retry; a frozen rejected request itself is NOT rewritten/removed
-        sync()
+        if (!syncMutex.tryLock()) throw ClientFailure("SYNC_IN_PROGRESS")
+        try {
+            val target = auth.state.value
+            val p = target.profile ?: throw ClientFailure("LOGIN_REQUIRED")
+            val profile = identities.first { it.profileId.isNotBlank() }
+            // Capture BEFORE HTTP, under the same mutex that handles double taps/retry cycles.
+            val approved = store.approveSnapshot(target.origin, p.accountId, profile.profileId)
+            syncApproved(approved)
+        } finally { syncMutex.unlock() }
     }
-    private suspend fun sync() = syncMutex.withLock {
+    private suspend fun retryApproved() = syncMutex.withLock {
+        val profile = identities.first { it.profileId.isNotBlank() }
+        val approved = store.scopeForRetry(profile.profileId) ?: return@withLock
+        syncApproved(approved)
+    }
+    private suspend fun syncApproved(approved: UploadScopeRow) {
         val profile = auth.state.value.profile ?: auth.me()
         val meta = store.meta() ?: throw ClientFailure("LOGIN_REQUIRED")
-        SyncWire.binding(meta.origin, meta.accountId, auth.state.value.origin, profile.accountId)
-        if (!meta.uploadEnabled) return@withLock
+        SyncWire.binding(approved.origin, approved.accountId, auth.state.value.origin, profile.accountId)
+        val local = identities.first { it.profileId.isNotBlank() }
+        if (approved.localProfileId != local.profileId || meta.origin != approved.origin || meta.accountId != approved.accountId)
+            throw ClientFailure("CONSENT_SCOPE_CONFLICT")
         mutable.update { it.copy(syncStatus = SyncStatus.SYNCING) }
         try {
             // A prior send may have committed remotely but its response/ack was lost.
             // Replay frozen requests BEFORE pull, so our own echo cannot be mistaken for a local collision.
-            for (wire in store.frozenRequests()) {
+            for (wire in store.approvedFrozen(approved)) {
                 wire.errorCode?.let { throw ClientFailure(it, 409) }
-                execute(wire)
+                execute(wire, approved)
             }
             pull()
-            val device = settings.snapshots.first { it.deviceId.isNotBlank() }.deviceId
+            val device = identities.first { it.deviceId.isNotBlank() }.deviceId
             while (true) {
-                val wire = store.nextRequest(device) ?: break
-                execute(wire)
+                val wire = store.nextRequest(device, approved) ?: break
+                execute(wire, approved)
             }
             pull()
-            store.success(); updateMeta()
+            if (!store.success(approved)) throw ClientFailure("CONSENT_SCOPE_CONFLICT")
+            updateMeta()
+            mutable.update { it.copy(notice = UiNotice(UUID.randomUUID().toString(), "SYNC_SNAPSHOT_COMPLETE",
+                "Подтверждённый снимок отправлен. Новые записи ждут следующего ручного согласия.")) }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
             val code = (error as? ClientFailure)?.code ?: "CLIENT_ERROR"
@@ -119,7 +138,8 @@ class AndroidClient(val auth: SessionClient, private val store: ClientSyncStore,
             if (!reply.getBoolean("hasMore")) break
         }
     }
-    private suspend fun execute(wire: WireRow) {
+    private suspend fun execute(wire: WireRow, approved: UploadScopeRow? = null) {
+        if (wire.outboxId != null) store.requireApproved(wire, approved ?: throw ClientFailure("CONSENT_REQUIRED"))
         try {
             val result = auth.authorized(wire.method, wire.path, wire.body, wire.requestId, wire.origin, wire.accountId)
             store.acknowledge(wire, result)
@@ -219,7 +239,7 @@ class AndroidClient(val auth: SessionClient, private val store: ClientSyncStore,
         }
         mutable.update { it.copy(syncStatus = when {
             m?.errorCode != null -> SyncStatus.ERROR
-            m?.uploadEnabled == true && auth.state.value.profile != null -> SyncStatus.IDLE
+            auth.state.value.profile != null && (m?.uploadEnabled == true || m?.lastSuccessAt != null) -> SyncStatus.IDLE
             else -> SyncStatus.LOCAL_ONLY
         }, lastSuccessAt = m?.lastSuccessAt) }
     }
@@ -227,15 +247,19 @@ class AndroidClient(val auth: SessionClient, private val store: ClientSyncStore,
         val code = (error as? ClientFailure)?.code ?: "CLIENT_ERROR"
         val message = when (code) {
             "SERVER_NOT_CONFIGURED" -> "Укажите HTTPS-адрес своего сервера в настройках."
-            "INVALID_ORIGIN" -> "Нужен HTTPS origin без пути, логина, query и fragment."
+            "INVALID_ORIGIN" -> "Нужен HTTPS base URL с допустимым необязательным префиксом, без логина, query, fragment и обходов пути."
             "TELEGRAM_NOT_CONFIGURED" -> "На сервере ещё не настроен Telegram-бот. Вход не выполнен."
             "OFFLINE" -> "Сервер недоступен. Локальные данные и очередь сохранены."
-            "ACCOUNT_BINDING_CONFLICT" -> "Локальная история привязана к другому аккаунту или origin. Автослияние запрещено."
+            "ACCOUNT_BINDING_CONFLICT" -> "История привязана к другому адресу (включая префикс) или аккаунту. Вернитесь к прежнему серверу либо согласуйте отдельный перенос; автоматической перепривязки/очистки нет."
             "LOGIN_REQUIRED", "LOGIN_RESPONSE_LOST" -> "Нужен новый вход. Одноразовый ответ не удалось безопасно восстановить."
             "REMOTE_REVOKE_UNCONFIRMED" -> "Локальная сессия удалена. Отзыв на сервере не подтверждён."
             "REVISION_CONFLICT", "PULL_LOCAL_CONFLICT", "IDEMPOTENCY_CONFLICT" -> "Конфликт данных. Локальные записи и операция сохранены; автоматической перезаписи нет."
             "POLICY_UNRESOLVED" -> "Для этой операции сервер требует ещё не выбранное правило. Данные не удалены."
             "SOCIAL_PENDING" -> "Предыдущая операция для этой настройки ещё не подтверждена или конфликтует. Новый набор не отправлен; автоматической перезаписи нет."
+            "CONSENT_REQUIRED", "CONSENT_RECONFIRM_REQUIRED" -> "Нужно подтвердить новый ручной снимок синхронизации. Старые записи и запросы сохранены."
+            "CONSENT_SCOPE_CONFLICT" -> "Адрес, профиль или снимок согласия изменился. Передача остановлена без удаления записей."
+            "CONSENT_DEPENDENCY_PENDING" -> "Зависимость записи не входит в подтверждённый снимок и ещё не известна серверу. Дополнительные данные автоматически не отправлены."
+            "SYNC_IN_PROGRESS" -> "Подтверждённый запуск уже выполняется; его снимок не расширен повторным нажатием."
             else -> "Операция не подтверждена ($code)."
         }
         mutable.update { it.copy(notice = UiNotice(UUID.randomUUID().toString(), code, message)) }

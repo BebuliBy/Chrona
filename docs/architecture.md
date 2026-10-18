@@ -1,5 +1,7 @@
 # Chrona: архитектура и границы решений
 
+**Latest:** public ingress — standalone Public Gateway/native Funnel8443. Chrona declarative root consumer, private443/Nextcloud не опубликован. Client UI/core/vault/transport теперь имеют общий safe baseURL contract; Room3 ограничивает одноразовый sync exact IDs. External ingress проверен, phone native smoke ждёт ownerunlock. [Public checkpoint](public-gateway-checkpoint-2026-10-18.md), [consumer contract](../infra/public-gateway-integration.md).
+
 Статус на 2026-10-18: UI-v2, Room2/DataStore/collector, Android HTTPS/PKCE/sync/social client и Kotlin/Ktor/JDBC backend объединены. Xray/Postgres/API/private HTTPS работают; после owner hidden token-install verified worker activated/auth enabled. Successful poll/SQL progress проверены, но phone/owner auth/sync E2E ещё нет. Fixtures только preview, старый `app` сохранён. [Интеграция](integration-2026-10-18.md), [контракт](data-api-contract.md), [runtime](server-deployment-2026-10-18.md).
 
 ## Целевая схема

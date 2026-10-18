@@ -1,19 +1,21 @@
 # Android API client — checkpoint 2026-10-18
 
-ID `chrona-client-20261018`, archi → developer; worktree `/tmp/opencode/chrona-core`.
-Реализован клиентский код, **не телефонный E2E и не работающий Telegram login в
-нынешней инфраструктуре**. Backend исходники прочитаны read-only из отдельного
-worktree, в том числе обновлённый `ActivityViews` explicit-day projection.
+Исходный этап `chrona-client-20261018` выполнялся в отдельном worktree. Актуальный
+fix `chrona-public-client-fix-20261018` выполнен **в `/home/niki/android-tracker`**:
+единый base-path contract и bounded one-shot upload consent, schema3/code3.
+[Проверки и owner-действия](client-fixes-2026-10-18.md). Серверные runtime сведения
+определяет root deployment report; здесь live auth/phone E2E не проверялись.
 
 ## Что реализовано
 
 - `HttpsTransport` на HttpsURLConnection, системный TLS/hostname verification,
   explicit connect/read timeouts, bounded request/response, no cache, **no redirects**.
   Нет trust-all, вшитого IP/domain/credentials, обращения к loopback backend.
-- Пользовательский HTTPS **origin**, а не URL с произвольным API prefix:
-  scheme=https, hostname и optional port; без userInfo/query/fragment/path.
-  Empty config отключает доступ. Нормализация host/default443/trailing slash;
-  origin change удаляет старую session/pending challenge и отключает raw upload.
+- Пользовательский HTTPS **base URL**: authority и optional safe base path,
+  без userInfo/query/fragment/encoded traversal. Один валидатор ServerBaseUrl
+  используется UI/core/vault/transport. Prefix добавляется к относительному `/v1/`
+  один раз, redirects/TLS bypass запрещены. Empty config отключает доступ.
+  Смена домена/порта/**prefix** удаляет session/pending и приостанавливает raw consent.
 - PKCE S256, SecureRandom32bytes verifier, private pending record, явный bot intent
   только на проверенный `https://t.me/<bot>?start=<UUID>` без verifier/token.
   Status pending не становится login success. Confirmed → one-use exchange → `/me`;
@@ -67,26 +69,30 @@ Shared README/roadmap/CHANGELOG остаются у root.
 
 ## Binding, consent, retry
 
-SQL meta привязывает один local profile к паре **origin + account UUID**. Login не
-запускает raw upload. Первый account binding возможен, но другой account/origin
+SQL meta привязывает один local profile к паре **normalized base URL (включая prefix)
+и account UUID**. Login не запускает raw upload. Первый binding возможен, но другой target/account
 после binding даёт ACCOUNT_BINDING_CONFLICT без автоматического слияния/очистки.
 На отвергнутый exchange делается best-effort revoke только новой неподходящей session.
 Перенос origin/аккаунта требует отдельной явной recovery/migration функции, которой
 здесь нет; просто URL edit не мигрирует личную историю.
 
-**RequestSync — явное согласие на отправку локальной raw истории.** После него
-uploadEnabled сохраняется для этого bound profile. App-process loop повторяет
-доставку с backoff5..120s, штатный interval30s; без WorkManager/wake/force-stop обхода.
-При logout/origin change consent отключается. После обычного process restart ранее
-данное согласие сохраняется, сессия и binding проверяются перед retry.
+**RequestSync — bounded one-shot consent**, не включение постоянного autosync.
+Под mutex, до HTTP, Room transaction фиксирует точные operation IDs текущей очереди,
+scope UUID, target/account/local profile. Новые записи не входят в этот набор.
+App-process loop может повторить с backoff5..120s **только старый approved pending**,
+включая после process restart; нет WorkManager/wake/force-stop обхода.
+Повторное нажатие/возобновление незавершённого scope не расширяет membership и не
+пересчитывает frozen body. После успешного ACK/pull scope consent снимается атомарно,
+будущая очередь ждёт нового диалога. Logout/смена target приостанавливает разрешение,
+сохраняя raw/frozen data. Никакого постоянного auto-upload opt-in здесь нет.
 
 Отдельные social mutation уже явно заказаны своим action, поэтому их frozen request
 может повториться while process alive без согласия на **raw history upload**. Это
 не разрешает отправку outbox manual/collector до RequestSync.
 
 IDLE не означает «очередь пуста»: UI получает pendingOperations. Последний success
-timestamp обновляется только после всех ACK, pull и атомарной проверки пустой
-raw/social очереди. Concurrent новая запись не превращается в ложный allSynced.
+timestamp относится к завершённому **approved snapshot**, не ко всем будущим записям.
+Поздние raw/social операции не расширяют и не удерживают завершённый raw scope.
 Reject/conflict остаются error, не ack/delete. Успешные уже ack-нутые операции при
 частичной ошибке не дублируются и не отменяют локальную историю.
 
@@ -104,7 +110,7 @@ Reject/conflict остаются error, не ack/delete. Успешные уже
   origin/account, method/path, exact canonical body, operationId/baseRevision.
   Retry использует тот же body/key, даже после изменения local value/refresh/restart.
   Никакого пересчёта frozen payload/revision после неизвестной доставки.
-- Перед pull сначала повторяются старые frozen requests: сервер мог уже commit-нуть
+- Перед pull сначала повторяются только **approved** старые frozen raw requests: сервер мог уже commit-нуть
   запрос, но ответ потерялся. Dedup ACK обновляет revision/applied set и удаляет
   только соответствующую operation в той же transaction. Это предотвращает
   ошибочный conflict на собственном unacked echo.
@@ -124,7 +130,7 @@ Reject/conflict остаются error, не ack/delete. Успешные уже
   LocalReadModels возвращает MULTI_DEVICE_UNRESOLVED, включая overlap с local open
   checkpoint. Known manual cells продолжают работать. Day/coverage политики не выбраны.
 
-## Schema2 и migration
+## Schema1/2/3 и migration
 
 Сохранён schema1 JSON. Добавлен настоящий generated schema2:
 `chrona/schemas/by.bebuliby.chrona.data.ChronaDatabase/2.json`, hash
@@ -137,12 +143,19 @@ MIGRATION_1_2 создаёт только четыре служебных таб
 Pending count включает raw outbox + social requests без двойного подсчёта raw wire.
 Locale.ROOT используется для wire enum names.
 
+Schema3 добавляет только `upload_scopes`/`approved_uploads` и индекс. MIGRATION_2_3
+снимает прежний unbounded uploadEnabled, сохраняя raw/outbox/frozen records; старое
+разрешение не превращается в произвольный новый снимок. Нужен manual reconfirm.
+JSON1/2 сохранены; JSON3 реально экспортирован Room. Полный migration/test status —
+в [client fixes](client-fixes-2026-10-18.md). После fix debug code3/0.3.1-fix;
+applicationId/signing/SDK/Compose не менялись.
+
 Новых production dependencies нет. Единственная новая **test-only** зависимость
 `org.json:json:20240303` даёт настоящий JVM org.json вместо Android stub для fake
 transport tests; в APK не входит. Старые SDK/AGP/Compose/KSP/signing/version identity
 не менялись. Добавлены INTERNET и usesCleartextTraffic=false, не новые системные настройки.
 
-## Фактически проверено
+## Исторические проверки client-only прохода
 
 - KSP task и copyRoomSchemas успешно сгенерировали v2. Совмещённая короткая команда
   закончилась ошибкой **временного build/-only dependency resolver init script**,
@@ -190,16 +203,18 @@ env JAVA_HOME="$HOME/.local/opt/android-studio/jbr" ANDROID_HOME="$HOME/Android/
 python chrona/src/test/schema_migration_test.py
 ```
 
-Это **следующие**, не выполненные здесь final build/runtime checks. В лёгкий compiler
-probe не входят MainActivity/UI и Gradle's resolved classpath semantics. SQL tests
-не являются Android Room migration/runtime test. Ни Keystore provider/key, ни
-реальный HTTPS/Telegram/сервер/телефон/ADB не использовались.
+В client-only проходе это были следующие, ещё не выполненные checks. В актуальном
+MAIN fix полный Android build/test/lint **выполнен**: [code3 report](client-fixes-2026-10-18.md).
+Лёгкий compiler probe сам по себе не включал MainActivity/UI/Gradle graph; SQL tests
+не являются Android Room runtime acceptance. Native Keystore/HTTPS/phone E2E здесь
+по-прежнему не проверены.
 
 ## Реальные ограничения / что не называть готовым
 
-1. У телефона нет настроенного пользовательского HTTPS origin; bot token/Telegram
-   auth сейчас disabled на backend. Реальный вход/sync/friends E2E **не проверен**.
-   Backend loopback18080 не вшит и не считается телефонным endpoint.
+1. Актуальную activation/public gateway конфигурацию ведут root/sysadmin в deployment
+   report. Этим клиентским fix live auth/phone/server не проверялись; не переносить
+   прежнее историческое «token отсутствует/auth disabled» на нынешний runtime.
+   Реальный phone login/sync/friends E2E **не принят**. Loopback адреса в APK не вшиты.
 2. При неизвестной доставке one-use refresh/exchange возможен необходимый повтор
    login. Нельзя обещать автоматическое восстановление session без её ответа.
 3. Backend `Activities.mutate` сейчас принимает manual actual **только за текущий
@@ -213,7 +228,7 @@ probe не входят MainActivity/UI и Gradle's resolved classpath semantics
    решение, а не переписанный requestId/baseRevision или удаление данных.
 6. Server source validation не является device attestation; unknown/partial/day/
    zero-curve/streak/sharing-default policies не выбраны этим клиентом.
-7. Нужны root final build/lint и отдельно разрешённые physical tests Keystore,
+7. Android code3 build/lint выполнен; отдельно нужны разрешённые physical tests Keystore,
    process kill/file persistence/Room upgrade, native HTTPS/offline/rotation,
    real bot confirmation, binding consent, full sync/restore/ACL revoke. Cached
    friend snapshot уже показанного не может быть гарантированно «отозван» офлайн.

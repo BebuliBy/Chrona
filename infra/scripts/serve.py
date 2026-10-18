@@ -57,6 +57,34 @@ def own_path(path):
     return path.rstrip("/") == "/chrona" or path.startswith("/chrona/")
 
 
+def managed_public_state():
+    """Only trust the independent root-owned gateway's exact owned8443 state."""
+    file = Path("/etc/public-gateway/state.json")
+    if not file.exists():
+        return None
+    private(file)
+    if stat.S_IMODE(file.stat().st_mode) != 0o600 or stat.S_IMODE(file.parent.stat().st_mode) != 0o700:
+        raise ValueError("unsafe public gateway state")
+    state = json.loads(file.read_text())
+    if state.get("owned_port") != 8443 or not state.get("endpoint", "").endswith(":8443"):
+        raise ValueError("unexpected gateway ownership")
+    return state
+
+
+def without_managed_public(cfg):
+    result = copy.deepcopy(cfg)
+    if any(v for k, v in (result.get("AllowFunnel") or {}).items() if k.endswith(":443")):
+        raise ValueError("private443 must never be Funnel public")
+    own = {"TCP": (result.get("TCP") or {}).get("8443"), "Web": {k: v for k, v in (result.get("Web") or {}).items() if k.endswith(":8443")}, "AllowFunnel": {k: v for k, v in (result.get("AllowFunnel") or {}).items() if k.endswith(":8443")}}
+    if any(own.values()):
+        state = managed_public_state()
+        if not state or own != state.get("expected_port"):
+            raise ValueError("unowned public8443 drift")
+        for key in ("TCP", "Web", "AllowFunnel"):
+            result[key] = {k: v for k, v in (result.get(key) or {}).items() if k != "8443" and not k.endswith(":8443")}
+    return result
+
+
 def select_endpoint(cfg):
     if not cfg.get("TCP", {}).get("443", {}).get("HTTPS"):
         raise ValueError("existing HTTPS443 required")
@@ -87,7 +115,11 @@ def no_auth_secrets(value):
 
 
 def unchanged_except_own(before, after, endpoint):
-    candidate = copy.deepcopy(after)
+    try:
+        candidate = without_managed_public(after)
+        original = without_managed_public(before)
+    except ValueError:
+        return False
     handlers = candidate.get("Web", {}).get(endpoint, {}).get("Handlers", {})
     added = [path for path in handlers if own_path(path)]
     if len(added) != 1 or added[0] not in ("/chrona", "/chrona/"):
@@ -97,7 +129,6 @@ def unchanged_except_own(before, after, endpoint):
         return False
     # A false/missing AllowFunnel entry is the same tailnet-only policy; some
     # CLI versions serialize an explicit false during an otherwise narrow edit.
-    original = copy.deepcopy(before)
     for cfg in (original, candidate):
         enabled = {key: value for key, value in (cfg.get("AllowFunnel") or {}).items() if value}
         cfg.pop("AllowFunnel", None)
@@ -186,7 +217,8 @@ def rollback(state, before):
     if not unchanged_except_own(before, current, state["endpoint"]):
         raise ValueError("concurrent mapping change: do not alter unknown Serve state")
     call("serve", "--bg", "--https=443", "--set-path=/chrona", "off")
-    restored = config()
+    restored = without_managed_public(config())
+    before = without_managed_public(before)
     # Verify real mapping restoration, allowing only false/null Funnel cosmetic
     # normalization. Never use full-config reset or set-config for rollback.
     for cfg in (restored, before):
@@ -253,11 +285,17 @@ def main():
         if args.action == "apply":
             write_new(ORIGIN, ("https://" + state["endpoint"].removesuffix(":443") + "/chrona/\n").encode())
         private(ORIGIN)
-        if stat.S_IMODE(ORIGIN.stat().st_mode) != 0o600 or ORIGIN.read_text().strip() != "https://" + state["endpoint"].removesuffix(":443") + "/chrona/":
+        known_origins = {"https://" + state["endpoint"].removesuffix(":443") + "/chrona/"}
+        public = managed_public_state()
+        if public:
+            for consumer in public.get("applied", {}).values():
+                if consumer.get("origin_file") == str(ORIGIN):
+                    known_origins.add("https://" + public["endpoint"] + consumer["prefix"])
+        if stat.S_IMODE(ORIGIN.stat().st_mode) != 0o600 or ORIGIN.read_text().strip() not in known_origins:
             raise ValueError("private origin file permissions/content mismatch")
         print("HTTPS_CHRONA_PREFIX_CA_READY200_ME401_DISCOVERABILITY_PUT401_AUTH_ENABLED_NO_SYNTHETIC_LOGIN_PASS" if auth_enabled else "HTTPS_CHRONA_PREFIX_CA_READY200_ME401_DISCOVERABILITY_PUT401_AUTH503_NO_IDENTITY_PASS")
         print("NEXTCLOUD_ROOT_TRUSTED_TLS_UNCHANGED_ALL_PREEXISTING_MAPPINGS_PRESERVED")
-        print("TAILNET_ONLY_NO_FUNNEL_PRIVATE_ORIGIN_FILE0600")
+        print("PRIVATE443_TAILNET_ONLY_MANAGED_PUBLIC8443_SEPARATE_CANONICAL_ORIGIN_FILE0600" if public else "TAILNET_ONLY_NO_FUNNEL_PRIVATE_ORIGIN_FILE0600")
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print("SERVE_OPERATION_FAILED (private URLs/details suppressed)")
