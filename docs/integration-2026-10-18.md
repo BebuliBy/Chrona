@@ -1,5 +1,11 @@
 # Chrona — интеграционный checkpoint 2026-10-18
 
+**Новое подготовленное обновление:** code5/0.3.3-sync assembleDebug PASS, ещё не
+installed. Network-session preservation/default-VPN retry, loop10s/signals5s/
+Shorts slices5s и refetch friend. Read-only server: OWNERaccepted101, FRIEND0/
+нетинтервалов; grants в обе стороны есть на сегодня, revocation FRIEND0. Последние
+request timestamps не хранятся. [Факты/ограничения/доставка](vpn-two-account-result-2026-10-18.md).
+
 **Latest UX installed:** code4/0.3.2-ux, auto-sync/default-on, recorded Shorts
 counter/emotion, yellow faces, clean UI/time/today marker/managed endpoint.
 Final assembleDebug/install-r/own launch PASS, без tests/lint после последней

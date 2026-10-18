@@ -2,6 +2,7 @@ package by.bebuliby.chrona.data.client
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.io.ByteArrayOutputStream
 import java.net.URI
@@ -12,7 +13,8 @@ import java.util.Base64
 import javax.net.ssl.HttpsURLConnection
 import by.bebuliby.chrona.domain.ServerBaseUrl
 
-class ClientFailure(rawCode: String, val httpStatus: Int = 0) : IOException("Chrona client request failed") {
+class ClientFailure(rawCode: String, val httpStatus: Int = 0,
+                    val requestMayHaveBeenSent: Boolean? = null) : IOException("Chrona client request failed") {
     val code = rawCode.takeIf { it in codes } ?: "SERVER_ERROR"
     companion object {
         private val codes = setOf("INVALID_ORIGIN", "UNSAFE_LOGIN_URL", "INVALID_RESPONSE", "UNSUPPORTED_VERSION",
@@ -24,7 +26,7 @@ class ClientFailure(rawCode: String, val httpStatus: Int = 0) : IOException("Chr
             "CURSOR_RESNAPSHOT_REQUIRED", "TELEGRAM_NOT_CONFIGURED", "NOT_CONFIGURED", "NOT_IMPLEMENTED", "NOT_READY",
             "UNAUTHENTICATED", "FORBIDDEN", "NOT_FOUND", "VALIDATION", "RATE_LIMITED", "LOGIN_NOT_CONFIRMED",
             "CONSENT_REQUIRED", "CONSENT_RECONFIRM_REQUIRED", "CONSENT_SCOPE_CONFLICT", "CONSENT_DEPENDENCY_PENDING", "SYNC_IN_PROGRESS",
-            "BOOTSTRAP_EXISTING_BINDING", "SERVER_CONFIGURATION_MANAGED", "AUTOMATIC_SYNC_DISABLED")
+            "BOOTSTRAP_EXISTING_BINDING", "SERVER_CONFIGURATION_MANAGED", "AUTOMATIC_SYNC_DISABLED", "SESSION_REFRESH_UNCERTAIN")
     }
 }
 
@@ -69,8 +71,13 @@ class HttpReply(val status: Int, val body: String) { override fun toString() = "
 fun interface HttpTransport { suspend fun execute(request: HttpRequest): HttpReply }
 
 class HttpsTransport : HttpTransport {
+    private val active = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpsURLConnection>()
+    /** Abort only old default-route sockets; never select/bind a physical network or bypass a VPN. */
+    fun defaultNetworkChanged() { active.forEach { runCatching { it.disconnect() } } }
     override suspend fun execute(request: HttpRequest): HttpReply = withContext(Dispatchers.IO) {
         val connection = request.resolvedUrl().toURL().openConnection() as HttpsURLConnection
+        var bodyStarted = false
+        active += connection
         try {
             connection.instanceFollowRedirects = false
             connection.useCaches = false
@@ -78,6 +85,7 @@ class HttpsTransport : HttpTransport {
             connection.requestMethod = request.method
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Cache-Control", "no-store")
+            connection.setRequestProperty("Connection", "close") // do not reuse a pre-switch pooled socket
             request.bearer?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
             request.idempotencyKey?.let { connection.setRequestProperty("Idempotency-Key", it) }
             request.body?.let {
@@ -86,7 +94,7 @@ class HttpsTransport : HttpTransport {
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 connection.setFixedLengthStreamingMode(bytes.size)
-                connection.outputStream.use { stream -> stream.write(bytes) }
+                connection.outputStream.use { stream -> bodyStarted = true; stream.write(bytes) }
             }
             val status = connection.responseCode
             if (status in 300..399) throw ClientFailure("REDIRECT_REJECTED", status)
@@ -103,6 +111,9 @@ class HttpsTransport : HttpTransport {
             } ?: ByteArray(0)
             if (bytes.size > 2_097_152) throw ClientFailure("RESPONSE_TOO_LARGE")
             HttpReply(status, bytes.toString(Charsets.UTF_8))
-        } finally { connection.disconnect() }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: ClientFailure) { throw failure }
+        catch (_: IOException) { throw ClientFailure("OFFLINE", requestMayHaveBeenSent = bodyStarted) }
+        finally { active -= connection; connection.disconnect() }
     }
 }

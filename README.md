@@ -4,6 +4,14 @@ Android/Kotlin-трекер привычек: автоматический Short
 
 ## Статус на 2026-10-18
 
+**Подготовлено обновление0.3.3-sync/code5:** сетевые ошибки/VPN-switch больше не
+очищают вход как обычный logout, сохранена last-known identity; active loop≈10s,
+signals5s/immutable Shorts slices5s, headless Application/Accessibility controller,
+refresh выбранного friend snapshot. VPN не обходится, TLS/binding сохранены.
+assembleDebug PASS; **на телефон эта версия ещё не установлена**. Нет tests/lint.
+Если refresh мог совершиться, но ответ потерян, старый token не replay: нужен новый
+вход, пока нет отдельного server recovery contract. [Причины/серверный снимок](docs/vpn-two-account-result-2026-10-18.md).
+
 **Последняя установленная версия:0.3.2-ux/code4.** Служебные подписи/разрывы/редактор
 сервера убраны, время ч/мин/с и local HH:mm:ss, лимит Shorts заметен, сегодня выделено,
 «Настройки» одной строкой, лица жёлтые и анимированные. По последнему прямому

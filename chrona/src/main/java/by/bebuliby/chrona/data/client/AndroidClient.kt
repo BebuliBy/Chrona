@@ -29,8 +29,9 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
     private val mutable = MutableStateFlow(ClientView())
     val state = mutable.asStateFlow()
     private val syncMutex = Mutex()
-    private var backoff = 5_000L
-    private var initialized = false
+    @Volatile private var backoff = 10_000L
+    @Volatile private var retryNotBeforeNanos = 0L
+    @Volatile private var initialized = false
     private var automaticSignal: Job? = null
     private var lastAutomaticError: String? = null
 
@@ -51,7 +52,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
             if (auth.hasSession()) auth.me()
             else if (auth.state.value.loginPending) auth.refreshLogin()
             updateMeta()
-        } catch (error: Exception) { notify(error) }
+        } catch (error: Exception) { automaticFailure(error) }
         initialized = true
         signalAutomaticSync()
         scope.launch {
@@ -61,10 +62,10 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
                     if (auth.hasSession()) {
                         retrySocial()
                         runAutomaticCycle()
+                        refreshSelectedFriend()
                     }
-                    backoff = 30_000
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (error: Exception) { automaticFailure(error); backoff = (backoff * 2).coerceAtMost(120_000) }
+                catch (error: Exception) { automaticFailure(error) }
             }
         }
     }
@@ -102,10 +103,10 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         } else signalAutomaticSync()
     }
     /** Throttled producer/login signal: frequent checkpoint/events do not create a 100ms sender loop. */
-    fun signalAutomaticSync() {
+    @Synchronized fun signalAutomaticSync() {
         if (!initialized || automaticSignal?.isActive == true) return
         automaticSignal = scope.launch {
-            delay(10_000)
+            delay(5_000)
             try {
                 if (!auth.hasSession()) return@launch
                 val meta = store.meta() ?: return@launch
@@ -119,9 +120,12 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
     }
     /** Returns true when a constrained Worker should retry a remaining bounded slice. */
     suspend fun runAutomaticCycle(): Boolean {
+        val retryAt = retryNotBeforeNanos
+        if (retryAt != 0L && System.nanoTime() - retryAt < 0L) return true
         if (!syncMutex.tryLock()) return true
         try {
             if (!auth.hasSession()) return false
+            if (auth.refreshIsUncertain()) throw ClientFailure("SESSION_REFRESH_UNCERTAIN")
             var meta = store.meta()
             if (meta == null) { auth.me(); meta = store.meta() }
             val bound = meta ?: throw ClientFailure("LOGIN_REQUIRED")
@@ -140,6 +144,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
             val approved = store.approveSnapshot(bound.origin, bound.accountId, local.profileId, extendAutomatic = true)
             val completed = syncApproved(approved)
             lastAutomaticError = null
+            backoff = 10_000; retryNotBeforeNanos = 0L
             return !completed || store.hasPendingUploads()
         } finally { syncMutex.unlock() }
     }
@@ -150,7 +155,19 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
     }
     private fun automaticFailure(error: Exception) {
         val code = (error as? ClientFailure)?.code ?: "CLIENT_ERROR"
+        backoff = (backoff * 2).coerceIn(10_000, 120_000)
+        retryNotBeforeNanos = System.nanoTime() + backoff * 1_000_000
+        mutable.update { it.copy(syncStatus = if (code == "OFFLINE") SyncStatus.OFFLINE else SyncStatus.ERROR) }
         if (lastAutomaticError != code) { lastAutomaticError = code; notify(error) }
+    }
+    /** Default network only: no physical-network selection, VPN exclusion or custom DNS. */
+    fun defaultNetworkChanged(available: Boolean) {
+        if (!available) {
+            mutable.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
+        } else {
+            retryNotBeforeNanos = 0L; backoff = 10_000
+            signalAutomaticSync()
+        }
     }
     fun backgroundFailure(error: Exception) { automaticFailure(error) }
     private suspend fun ensureAutomaticAllowed(origin: String, accountId: String) {
@@ -226,6 +243,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         try {
             val result = auth.authorized(wire.method, wire.path, wire.body, wire.requestId, wire.origin, wire.accountId)
             store.acknowledge(wire, result)
+            if (wire.outboxId != null) delay(100) // bounded backlog pacing, not a 100-HTTP/s flush
             if (wire.path == "/v1/me/discoverability") auth.me() // authoritative state, including after a durable retry
         } catch (error: ClientFailure) {
             if (error.httpStatus in setOf(400, 403, 404, 409, 410, 422)) store.failed(wire, error.code)
@@ -292,6 +310,33 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
         }
     }
     fun closeFriend() { mutable.update { it.copy(friends = it.friends.copy(selected = null)) } }
+    /** Refresh only the already-open authorized owner/range; never expands a grant or merges friend raw data. */
+    private suspend fun refreshSelectedFriend() {
+        if (!mutable.value.automaticEnabled) return
+        val selected = mutable.value.friends.selected ?: return
+        val viewer = auth.state.value.profile ?: return
+        val origin = auth.state.value.origin
+        val range = selected.history.range
+        val query = "fromInclusive=${range.fromInclusive}&toExclusive=${range.toExclusive}&zoneId=${ServerOrigin.query(range.zoneId)}"
+        try {
+            val reply = auth.authorized("GET", "/v1/owners/${WireCodec.uuid(selected.owner.accountId)}/activity-view?$query",
+                expectedOrigin = origin, expectedAccount = viewer.accountId)
+            val fresh = WireCodec.snapshot(reply)
+            if (fresh.owner.accountId != selected.owner.accountId || fresh.history.range != range) throw ClientFailure("INVALID_RESPONSE")
+            mutable.update { current ->
+                if (current.friends.selected !== selected) current else current.copy(friends = current.friends.copy(
+                    status = FeatureStatus.READY, selected = fresh.copy(history = fresh.history.copy(period = selected.history.period))))
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: ClientFailure) {
+            mutable.update { current ->
+                if (current.friends.selected !== selected) current else current.copy(friends = current.friends.copy(
+                    status = FeatureStatus.ERROR, selected = if (failure.httpStatus in setOf(401, 403, 404)) null else selected))
+            }
+            // Offline keeps only already-delivered data and a visible connection error; no fresh-access claim.
+            throw failure
+        }
+    }
     suspend fun configureDiscoverability(enabled: Boolean) = syncMutex.withLock {
         if (store.socialRequests().any { it.path == "/v1/me/discoverability" }) throw ClientFailure("SOCIAL_PENDING")
         social("PUT","/v1/me/discoverability",SocialWire.discoverability(enabled))
@@ -341,6 +386,7 @@ class AndroidClient internal constructor(val auth: SessionClient, private val st
             "OFFLINE" -> "Сервер недоступен. Локальные данные и очередь сохранены."
             "ACCOUNT_BINDING_CONFLICT" -> "История привязана к другому адресу (включая префикс) или аккаунту. Вернитесь к прежнему серверу либо согласуйте отдельный перенос; автоматической перепривязки/очистки нет."
             "LOGIN_REQUIRED", "LOGIN_RESPONSE_LOST" -> "Нужен новый вход. Одноразовый ответ не удалось безопасно восстановить."
+            "SESSION_REFRESH_UNCERTAIN" -> "Не удалось подтвердить обновление входа после обрыва связи. Данные сохранены. В этом случае нужно повторить вход через Telegram."
             "REMOTE_REVOKE_UNCONFIRMED" -> "Локальная сессия удалена. Отзыв на сервере не подтверждён."
             "REVISION_CONFLICT", "PULL_LOCAL_CONFLICT", "IDEMPOTENCY_CONFLICT" -> "Конфликт данных. Локальные записи и операция сохранены; автоматической перезаписи нет."
             "POLICY_UNRESOLVED" -> "Для этой операции сервер требует ещё не выбранное правило. Данные не удалены."

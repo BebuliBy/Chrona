@@ -8,6 +8,7 @@ internal fun userNoticeMessage(notice: UiNotice): String? = when (notice.code) {
     "DISCOVERABILITY_SAVED", "SYNC_IN_PROGRESS" -> null
     "NOT_READY" -> "Сервис временно недоступен. Повторите позже."
     "OFFLINE" -> "Нет связи. Проверьте интернет и повторите попытку."
+    "SESSION_REFRESH_UNCERTAIN" -> "Не удалось подтвердить обновление входа после обрыва связи. Данные сохранены. В этом случае нужно повторить вход через Telegram."
     "PERMISSION_REQUIRED" -> "Разрешите отслеживание Shorts в настройках Android."
     "STORAGE_ERROR" -> "Не удалось открыть данные. Перезапустите приложение; данные не удалялись."
     "LOCAL_ERROR", "SECURE_STORAGE" -> "Не удалось сохранить данные. Повторите попытку."

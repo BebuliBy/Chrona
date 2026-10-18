@@ -40,8 +40,8 @@ class ShortsAccessibilityService : AccessibilityService() {
         override fun run() {
             if (!connected) return
             inspectWindow()
-            if (enabled && !recordingFailed) handler.postDelayed(this, 10_000)
-            // checkpoint threshold 15s (~20s at idle); disabled has no periodic writes/inspection
+            if (enabled && !recordingFailed) handler.postDelayed(this, 5_000)
+            // 5s confirmed checkpoint/sync slices; disabled still has no heartbeat writes.
         }
     }
     private val screenReceiver = object : BroadcastReceiver() {
@@ -84,7 +84,7 @@ class ShortsAccessibilityService : AccessibilityService() {
                     enabled = it.trackingEnabled
                     handler.removeCallbacks(heartbeat)
                     inspectWindow()
-                    if (enabled && !recordingFailed) handler.postDelayed(heartbeat, 10_000)
+                    if (enabled && !recordingFailed) handler.postDelayed(heartbeat, 5_000)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {

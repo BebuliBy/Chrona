@@ -24,7 +24,8 @@ class ClientSession(val accountId: String, val sessionId: String, val access: St
 class PendingLogin(val requestId: String, val verifier: String, val expiresAt: Instant, val exchanging: Boolean = false) {
     override fun toString() = "PendingLogin(redacted)"
 }
-class PrivateConnection(val origin: String = "", val session: ClientSession? = null, val pending: PendingLogin? = null) {
+class PrivateConnection(val origin: String = "", val session: ClientSession? = null, val pending: PendingLogin? = null,
+                        val cachedProfile: RemoteProfile? = null) {
     override fun toString() = "PrivateConnection(redacted)"
 }
 interface SessionVault {
@@ -37,7 +38,8 @@ internal object ConnectionRecordCodec {
     fun normalize(value: PrivateConnection): PrivateConnection {
         val target = ServerOrigin.parse(value.origin)
         if (target.isEmpty() && (value.session != null || value.pending != null)) throw ClientFailure("SECURE_STORAGE")
-        return PrivateConnection(target, value.session, value.pending)
+        if (value.cachedProfile != null && value.cachedProfile.accountId != value.session?.accountId) throw ClientFailure("SECURE_STORAGE")
+        return PrivateConnection(target, value.session, value.pending, value.cachedProfile)
     }
     fun decode(text: String): PrivateConnection {
         val json = JSONObject(text)
@@ -45,7 +47,8 @@ internal object ConnectionRecordCodec {
         return normalize(PrivateConnection(json.getString("origin"), s?.let {
             ClientSession(it.getString("accountId"), it.getString("sessionId"), it.getString("access"),
                 it.getString("refresh"), Instant.parse(it.getString("expiresAt")), it.optBoolean("rotating"))
-        }, p?.let { PendingLogin(it.getString("requestId"), it.getString("verifier"), Instant.parse(it.getString("expiresAt")), it.optBoolean("exchanging")) }))
+        }, p?.let { PendingLogin(it.getString("requestId"), it.getString("verifier"), Instant.parse(it.getString("expiresAt")), it.optBoolean("exchanging")) },
+            json.optJSONObject("cachedProfile")?.let { WireCodec.profile(it) }))
     }
     fun encode(value: PrivateConnection): String {
         val safe = normalize(value)
@@ -54,6 +57,8 @@ internal object ConnectionRecordCodec {
             .put("access", it.access).put("refresh", it.refresh).put("expiresAt", it.expiresAt.toString()).put("rotating", it.rotating)) }
         safe.pending?.let { json.put("pending", JSONObject().put("requestId", it.requestId).put("verifier", it.verifier)
             .put("expiresAt", it.expiresAt.toString()).put("exchanging", it.exchanging)) }
+        safe.cachedProfile?.let { json.put("cachedProfile", JSONObject().put("accountId", it.accountId).put("displayName", it.displayName)
+            .put("telegramLinked", it.telegramLinked).put("discoverable", it.discoverable)) }
         return json.toString()
     }
 }

@@ -23,7 +23,8 @@ class TrackingEngine(
 ) {
     companion object {
         const val VERSION = "chrona-structural-1"
-        const val CHECKPOINT_MILLIS = 15_000L
+        const val CHECKPOINT_MILLIS = 5_000L
+        const val SYNC_SLICE_MILLIS = 5_000L
         const val MAX_CONTINUITY_MILLIS = 30_000L
     }
     private var current: TrackingCheckpoint? = null
@@ -86,8 +87,15 @@ class TrackingEngine(
             current = open(frame)
             current!!.gapId?.let { gaps += gap(current!!, null) }
         } else {
-            current = previous.copy(lastWall = frame.wall, lastElapsed = frame.elapsed)
-            if (frame.elapsed - lastPersisted < CHECKPOINT_MILLIS) return null
+            if (previous.observation == ScreenObservation.SHORTS && frame.elapsed - previous.startElapsed >= SYNC_SLICE_MILLIS) {
+                // Publish a CLOSED immutable measured slice while viewing continues. No gap, no guessed now-time.
+                close(previous, frame.wall, frame.elapsed, IntervalEndReason.UNKNOWN, IntervalQuality.OBSERVED,
+                    intervals, segments, gaps)
+                current = open(frame)
+            } else {
+                current = previous.copy(lastWall = frame.wall, lastElapsed = frame.elapsed)
+                if (frame.elapsed - lastPersisted < CHECKPOINT_MILLIS) return null
+            }
         }
         lastPersisted = frame.elapsed
         return batch(frame, intervals, segments, gaps)

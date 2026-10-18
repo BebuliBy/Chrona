@@ -19,7 +19,7 @@ class AutomaticSyncWorker(context: Context, parameters: WorkerParameters) : Coro
             container.client.backgroundFailure(error)
             // Work success here only means no automatic retry; it is NOT a data ACK/sync success.
             if (error is ClientFailure && error.code in setOf("LOGIN_REQUIRED", "ACCOUNT_BINDING_CONFLICT",
-                    "AUTOMATIC_SYNC_DISABLED", "SERVER_NOT_CONFIGURED", "BOOTSTRAP_EXISTING_BINDING"))
+                    "AUTOMATIC_SYNC_DISABLED", "SERVER_NOT_CONFIGURED", "BOOTSTRAP_EXISTING_BINDING", "SESSION_REFRESH_UNCERTAIN"))
                 Result.success() else Result.retry()
         }
     }

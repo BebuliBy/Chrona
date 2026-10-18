@@ -1,5 +1,15 @@
 # История изменений
 
+## 2026-10-18 — подготовлена0.3.3-sync
+
+- Сохранение session/last-known profile при обычной потере сети; ambiguous refresh
+  сохраняется без unsafe replay и с понятным сообщением о необходимом повторном входе.
+- Default VPN network observer/retry, targetloop10s/signals5s/Shorts slices5s,
+  headless controller и обновление выбранного friend snapshot в его же ACL/range.
+- Read-only server snapshot отличил отсутствие FRIENDданных от отсутствия grants;
+  права/сервер не менялись. Один assembleDebug PASS, **ещё не установлено**, безtests/lint.
+  [Итог](docs/vpn-two-account-result-2026-10-18.md).
+
 ## 2026-10-18 — установлен чистый UX/автосинхронизация0.3.2
 
 - Убраны служебные подписи/gaps/серверный editor, читаемые часы/минуты/секунды и
