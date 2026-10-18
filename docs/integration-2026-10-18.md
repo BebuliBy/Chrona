@@ -46,11 +46,11 @@ python3 -B chrona/src/test/schema_migration_test.py
 | Infra | **33/33 PASS** после activation guards, root повторил; Python syntax/security/dry-run |
 | SQLite migration/freeze/rollback | **3/3 PASS**; не Android Room instrumentation |
 | Instrumentation | **13 bodies compiled**, **не запускались** |
-| Physical phone / visuals / native Keystore/Room / battery | **Не выполнялись** |
+| Physical phone install/cold launch | **PASS после owner confirmation**: SM-A376E/API36, install-r1→2, own resumed/focus; не visual/native/storage/E2E приёмка |
 
 Первый combined build остановлен tool timeout120s после unit/compile; повторные full commands с300s успешны. Сохраняются AGP experimental sourceSets/KSP compatibility и JBR25 compiler/SDK XML/native stripping warnings; весь toolchain не обновлялся ради их подавления. VM переведена на Application-only lifetime, не просто lint suppression.
 
-APK: `chrona/build/outputs/apk/debug/chrona-debug.apk`; test APK рядом в `outputs/apk/androidTest/debug/`. Артефакты/Gradle caches не входят в Git. APK **ещё не установлен** и не запускался на телефоне; перед этим нужно явное состояние/подтверждение владельца. Старые limited real-device spike результаты не production collector acceptance.
+APK: `chrona/build/outputs/apk/debug/chrona-debug.apk`; test APK рядом в `outputs/apk/androidTest/debug/`. После явного owner «Телефон готов» **install-r Success и cold launch Statusok** на единственном SM-A376E/API36, code1→2 без uninstall/clear/-d. Ownprocess/resumed/focus подтверждены; UI screenshots/деревья/private DB/vault не читались. Это не visual/Room/Keystore/network acceptance,13instrumentation по-прежнему не запускались. Артефакты/serial не входят в Git. [Phone checkpoint](phone-check-2026-10-18.md).
 
 ## Реальный server checkpoint
 
@@ -81,7 +81,7 @@ Enable helper сохранил backup, проверил queues/lease/отсут�
 
 ## Незавершённое — не скрывать
 
-- Физическая установка/новый collector/Room reopen/migration/native Keystore/UI/rendering/battery/boot/phone-tailnet и полный Telegram E2E.
+- После install/cold launch остаются новый collector/Room reopen/migration/native Keystore/UI/rendering/battery/boot/phone-tailnet и полный Telegram E2E.
 - Year layout, recurrence/streak/effective goal history/retroactive policy, authoritative day/coverage/multi-device overlap и zero-limit emotion/general-curve coefficient. Сейчас explicit-day known manual работает; auto actual остаётся Partial/Unknown и может блокировать общий complete score/цвет. Не исключать неизвестное из denominator молча.
 - Backend current-day manual-write policy может отвергать старые offline записи409; клиент сохраняет queue/error. Explicit conflict-resolution/account rebind UI пока не завершены; underlying history не удаляется.
 - Invite links, полный defaults inheritance, полная pagination/recovery/retention и стабильная release identity/signing не завершены.

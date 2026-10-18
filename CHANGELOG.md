@@ -153,3 +153,9 @@
 - Один worker реально started/healthy, successful poll progression/SQL offset/lease наблюдались36s, затем API auth enabled/healthy. Existing DB/proxy/backend80 image/Nextcloud root/mappings сохранены. Сообщений/login вместо владельца не отправляли, E2E не объявлен пройденным.
 - Усилены activation/rollback/bootstrap guards: fresh identity marker/queues/lease/no second worker, fail-closed webhook/pending; enabled-safe smoke не вызывает synthetic authbegin. Infra **33/33 PASS**; server Compose/native health и legacy checks PASS.
 - Android/backend source и APK не менялись. Следующий шаг — подтверждённый unlocked phone, install-r, configured tailnet/baseURL и вход из Chrona по сгенерированному request. Bare `/start` без payload остаётся noop backend80; выдуманный UUID не используется.
+
+## 2026-10-18 — обновление и первый запуск на готовом телефоне
+
+- После явного подтверждения owner USB/unlock desktop подтвердил одну authorized SM-A376E/Android16/API36, сверил APK metadata/signature и выполнил install-r:0.2.0-ui/code1→0.3.0-local/code2, Success. Uninstall/clear/downgrade/автовыдачи permissions не было.
+- Собственная MainActivity cold launch Statusok, живой ownprocess/resumed/focus подтверждены. Tailscale установлен, но активное подключение/HTTPS/API пока не доказаны. UI/private DB/vault/чужие apps не читались; ни login, ни sync, ни сообщения не инициировались.
+- Код/APK не менялся/не пересобирался. Следом owner Tailscale/явный HTTPS baseURL и настоящее подтверждение входа по generated Telegram link; данные/секреты/serial/privatehostname в Git не добавлялись.
