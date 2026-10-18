@@ -99,8 +99,12 @@ class PublicConnectionSmokeTest {
         }
         val previous = ServerBaseUrl.normalize(ownEditableValue())
         if (previous == target) {
-            // Do not pretend an idempotent, disabled Save button has exercised a new Keystore save.
-            enter("CONFIG_ALREADY_SAVED_NO_NEW_WRITE_PROBE"); throw AssertionError()
+            // The previous probe may already have saved successfully. Do not rewrite/clear/toggle it.
+            enter("CONFIG_ALREADY_SAVED")
+            awaitConfigured("WAIT_ALREADY_SAVED_CONFIG")
+            assertOwnConfiguredControls(checkSaveButton = false)
+            enter("READONLY_CONFIG_VERIFIED")
+            return
         }
 
         enter("ENTER_OWN_SERVER_BASE_URL")
@@ -115,16 +119,62 @@ class PublicConnectionSmokeTest {
             compose.onNodeWithTag("confirm_server_change").assertIsEnabled().performClick()
         }
 
-        enter("WAIT_NATIVE_CONFIGURE_SAVE")
-        compose.waitUntil(20_000) {
-            ownConfiguredStatus() && ServerBaseUrl.normalize(ownEditableValue()) == target &&
-                !enabled("save_server") && enabled("telegram_login") && !exists("logout")
-        }
-        compose.onNodeWithTag("connection_status").performScrollTo().assertTextContains("Сервер настроен")
-        compose.onNodeWithTag("save_server").assertIsNotEnabled()
-        compose.onNodeWithTag("telegram_login").performScrollTo().assertExists().assertIsEnabled()
+        awaitConfigured("WAIT_NATIVE_CONFIGURE_SAVE")
+        assertOwnConfiguredControls()
         // Never click telegram_login, refresh_login, request_sync, system dialogs or external UI.
         enter("COMPLETE_401_AND_NATIVE_CONFIGURED")
+    }
+
+    private fun assertOwnConfiguredControls(checkSaveButton: Boolean = true) {
+        enter("ASSERT_CONFIG_STATUS_TEXT")
+        // The actual status continues with " · вход ещё не выполнен". Exact matching is wrong.
+        compose.onNodeWithTag("connection_status").performScrollTo()
+            .assertTextContains("Сервер настроен", substring = true)
+        if (checkSaveButton) {
+            enter("ASSERT_SAVE_DISABLED")
+            compose.onNodeWithTag("save_server").assertIsNotEnabled()
+        }
+        enter("ASSERT_LOGIN_ENABLED")
+        compose.onNodeWithTag("telegram_login").performScrollTo().assertExists().assertIsEnabled()
+    }
+
+    private data class UiFlags(
+        val configuredStatusConstant: Boolean,
+        val fieldTargetMatches: Boolean,
+        val saveMergedEnabled: Boolean,
+        val loginMergedEnabled: Boolean,
+        val logoutExists: Boolean,
+        val pendingExists: Boolean,
+        val noticeCode: String,
+    ) {
+        // Login is enabled only when the UI draft equals the persisted connection target and is idle.
+        // Save disabled is checked separately with the standard merged Compose assertion.
+        fun configured() = configuredStatusConstant && fieldTargetMatches && loginMergedEnabled && !logoutExists && !pendingExists
+    }
+
+    private fun ownUiFlags() = UiFlags(
+        ownConfiguredStatus(), ServerBaseUrl.normalize(ownEditableValue()) == target,
+        mergedEnabled("save_server"), mergedEnabled("telegram_login"), exists("logout"), exists("refresh_login"), safeNoticeCode(),
+    )
+
+    private fun report(flags: UiFlags) {
+        // Only booleans/static codes. Never log the underlying text/target/semantics object.
+        Log.i(TAG, "PUBLIC_CONNECTION_DIAGNOSTIC configuredStatusConstant=${flags.configuredStatusConstant}" +
+            " fieldTargetMatches=${flags.fieldTargetMatches} saveMergedEnabled=${flags.saveMergedEnabled}" +
+            " loginMergedEnabled=${flags.loginMergedEnabled} logoutExists=${flags.logoutExists}" +
+            " pendingExists=${flags.pendingExists} noticeCode=${flags.noticeCode}")
+    }
+
+    private fun awaitConfigured(code: String) {
+        enter(code)
+        var last = ownUiFlags()
+        try {
+            compose.waitUntil(20_000) { last = ownUiFlags(); last.configured() }
+        } catch (failure: Throwable) {
+            report(last) // capture while the own Activity still exists, before rule teardown
+            throw failure // outer privacy rule replaces this with a fresh, cause-free error
+        }
+        report(last)
     }
 
     /** Keeps only this already-unlocked foreground test window on, never wakes/unlocks the phone. */
@@ -147,16 +197,40 @@ class PublicConnectionSmokeTest {
     private fun exists(tag: String): Boolean = compose.onAllNodesWithTag(tag, useUnmergedTree = true)
         .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
 
-    private fun enabled(tag: String): Boolean = compose.onAllNodesWithTag(tag, useUnmergedTree = true)
-        .fetchSemanticsNodes(atLeastOneRootRequired = false).any { !it.config.contains(SemanticsProperties.Disabled) }
+    // Same merged-tree predicate used by assertIsEnabled(), not Disabled on an unmerged wrapper.
+    private fun mergedEnabled(tag: String): Boolean = compose.onAllNodes(hasTestTag(tag) and isEnabled(), useUnmergedTree = false)
+        .fetchSemanticsNodes(atLeastOneRootRequired = false).size == 1
 
-    private fun ownEditableValue(): String = compose.onAllNodesWithTag("server_base_url", useUnmergedTree = true)
+    private fun ownEditableValue(): String = compose.onAllNodesWithTag("server_base_url", useUnmergedTree = false)
         .fetchSemanticsNodes(atLeastOneRootRequired = false).singleOrNull()
         ?.config?.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
 
-    private fun ownConfiguredStatus(): Boolean = compose.onAllNodesWithTag("connection_status", useUnmergedTree = true)
+    private fun ownConfiguredStatus(): Boolean = compose.onAllNodesWithTag("connection_status", useUnmergedTree = false)
         .fetchSemanticsNodes(atLeastOneRootRequired = false).singleOrNull()
         ?.config?.getOrNull(SemanticsProperties.Text)?.any { it.text.contains("Сервер настроен") } == true
+
+    private fun safeNoticeCode(): String {
+        val notices = compose.onAllNodesWithTag("ui_notice", useUnmergedTree = false)
+            .fetchSemanticsNodes(atLeastOneRootRequired = false)
+        if (notices.isEmpty()) return "NONE"
+        val text = notices.singleOrNull()?.config?.getOrNull(SemanticsProperties.Text)
+            ?.joinToString(" ") { it.text } ?: return "NOTICE_PRESENT_UNCLASSIFIED"
+        // Match only known constant UI messages; arbitrary code-like substrings may contain PII.
+        val constants = mapOf(
+            "Не удалось открыть локальное хранилище. Данные не сбрасывались." to "STORAGE_ERROR",
+            "Не удалось подтвердить операцию. Проверьте ввод, данные и доступ к хранилищу." to "LOCAL_ERROR",
+            "Хранилище ещё открывается." to "NOT_READY",
+            "Нужен HTTPS base URL с допустимым необязательным префиксом, без логина, query, fragment и обходов пути." to "INVALID_ORIGIN",
+            "Нужен новый вход. Одноразовый ответ не удалось безопасно восстановить." to "LOGIN_REQUIRED",
+            "Нужно подтвердить новый ручной снимок синхронизации. Старые записи и запросы сохранены." to "CONSENT_RECONFIRM_REQUIRED",
+            "История привязана к другому адресу (включая префикс) или аккаунту. Вернитесь к прежнему серверу либо согласуйте отдельный перенос; автоматической перепривязки/очистки нет." to "ACCOUNT_BINDING_CONFLICT",
+        )
+        constants[text]?.let { return it }
+        for (code in listOf("SECURE_STORAGE", "CLIENT_ERROR", "NOT_READY", "INVALID_RESPONSE", "LOGIN_REQUIRED", "SERVER_NOT_CONFIGURED")) {
+            if (text == "Операция не подтверждена ($code).") return code
+        }
+        return "NOTICE_PRESENT_UNCLASSIFIED"
+    }
 
     private fun enter(code: String) { stage = code; Log.i(TAG, "PUBLIC_CONNECTION_STAGE_$code") }
 

@@ -1,6 +1,6 @@
 # Chrona — интеграционный checkpoint 2026-10-18
 
-**Latest public/fix:** standalone Public Gateway (`/home/niki/public-gateway`, `/opt/public-gateway`) публикует только8443, Chrona первый root consumer, private443 сохранён. External matrix PASS, generic14/appguards34 PASS. Общий HTTPSbaseURL/one-shot consent исправлены, schema3/migration2→3;125Androidunit/SQLite5 PASS,lint0err17warn. APKcode3/0.3.1-fix installed-r/launchPASS.14instrumentation compiled, native smoke пока0runs — OWNER_UNLOCK_REQUIRED. Предыдущие schema2/unit112 ниже — история исходного checkpoint. [Текущий итог](public-gateway-checkpoint-2026-10-18.md), [consumer](../infra/public-gateway-integration.md), [fixes](client-fixes-2026-10-18.md).
+**Latest:** standalone Public Gateway (`/home/niki/public-gateway`, `/opt/public-gateway`) публикует только8443, Chrona первый root consumer, private443 сохранён. External matrix/generic14 PASS. Общий HTTPSbaseURL/one-shot consent исправлены, schema3/migration2→3;125Androidunit/SQLite5 PASS,lint0err17warn. APKcode3/0.3.1-fix installed-r/launchPASS. Native smoke **2runs/0PASS/2FAIL** на UI test assertions, оба native DNSglobal/HTTPS401; повтор подтвердил already-saved target/disabled Save/enabled Login. Last test-only substring fix compiled/not-device-rerun. Backend **87/87**, infra **37/37** PASS; **worker87 deployed/API80 unchanged**, один healthy poller36s/offset/queues сохранены. Старый owner challenge expired/unbound/sessions0, новый вход ещё не принят. [Login/rollout](bot-login-recovery-2026-10-18.md), [probe](phone-public-smoke-2026-10-18.md), [gateway](public-gateway-checkpoint-2026-10-18.md). Schema2/unit112/частный origin ниже — история исходного checkpoint.
 
 Это отчёт о **написанном/собранном коде и реально развёрнутом server checkpoint**, не заявление о завершении всего продукта или phone/Telegram E2E.
 
@@ -71,7 +71,9 @@ Origin владелец показывает в своём терминале:
 ssh -t server 'sudo -- cat /etc/chrona/client-origin'
 ```
 
-Его полное значение с `/chrona/` вводится в settings приложения. Телефону нужен разрешённый доступ к tailnet; это **не public API** и не гарантия доступа друзей без соответствующей сети.
+**Теперь canonical значение — public8443 root без `/chrona/`**, tailnet на телефоне
+не требуется. Прежний private `/chrona/` сохранён отдельно; не дописывать его к
+новому адресу. Native phone HTTPS401 подтверждён, login ещё нет.
 
 ## Bot activation выполнена, следующий owner test
 
@@ -79,7 +81,12 @@ Hidden installer успешно выполнен владельцем, token в 
 
 Enable helper сохранил backup, проверил queues/lease/отсутствие worker, запустил один bot `--no-deps`, дождался реального poll/readiness, затем включил API auth `--no-deps`. DB/proxy/image80/старые службы не пересоздавались. Ошибки/429/crash/reboot в этом activation шаге не провоцировались;5с — long-poll parameter, не жёсткий end-to-end SLA. Не обещать exactly-once внешнего Telegram send.
 
-**Не повторять token install/activation без причины.** Следом — включённый разблокированный phone, APK update, tailnet/baseURL, вход **из Chrona** по сгенерированной ссылке `/start <real requestId>`, подтверждение только владельцем и возврат. Bare `/start` в backend80 noop; UUID не придумывать. Сообщений/подтверждений вместо владельца агенты не отправляли. Нужны настоящие auth/sync/friend/revoke/recovery checks; пока E2E не passed.
+**Не повторять token install/activation без причины.** Code3/config уже на телефоне.
+После worker87 bare `/start`/`/help` отвечают инструкцией без входа; старое processed
+noop не replay. Владелец проверяет expired pending и начинает **новый вход из Chrona**
+по новой generated ссылке, подтверждает свой запрос и возвращается в пределах5мин.
+UUID не придумывать, вместо owner не подтверждать. Пока он входит — не phone tests/
+reinstall/restart/clear. Настоящие auth/sync/friend/revoke/recovery E2E ещё не passed.
 
 ## Незавершённое — не скрывать
 

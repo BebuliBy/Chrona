@@ -8,6 +8,8 @@ import kotlin.random.Random
 data class BotJob(val id: String, val chat: Long, val kind: String, val payload: JsonObject, val attempts: Int)
 private data class RenderedDelivery(val method: String, val body: JsonObject,
                                     val nextViewId: String? = null, val nextViewPayload: JsonObject? = null)
+internal const val BOT_LOGIN_LINK_UNAVAILABLE = "Ссылка недействительна или устарела. Начните новый вход в Chrona."
+internal const val BOT_LOGIN_HELP = "Для входа откройте Chrona → Настройки → Войти через Telegram. Используйте новую ссылку из приложения, подтвердите запрос кнопкой в боте и вернитесь в Chrona. Обычный запуск бота не выполняет вход."
 
 class BotWorker(private val identity: Identity, private val social: Social, private val transport: TelegramTransport,
                 private val jitter: (Long) -> Long = { Random.nextLong(it / 4 + 1) }) {
@@ -90,6 +92,8 @@ class BotWorker(private val identity: Identity, private val social: Social, priv
                 val sp = c.setSavepoint()
                 try {
                     when (command) {
+                        "help" -> enqueue(c,"$updateId:help",chat,"text",obj("text" to str(BOT_LOGIN_HELP)))
+                        "invalid_login" -> enqueue(c,"$updateId:error",chat,"text",obj("text" to str(BOT_LOGIN_LINK_UNAVAILABLE)))
                         "start" -> { identity.botStart(c,args[0],sender); enqueue(c,"$updateId:prompt",chat,"login_prompt",obj("requestId" to str(args[0]))) }
                         "confirm", "deny" -> {
                             identity.botConfirm(c,args[0],sender,u.text("displayName"),command == "confirm",u.optionalText("username"))
@@ -112,7 +116,8 @@ class BotWorker(private val identity: Identity, private val social: Social, priv
                     }
                 } catch (f: Fault) {
                     c.rollback(sp)
-                    enqueue(c,"$updateId:error",chat,"text",obj("text" to str("Операция недоступна: ${f.code}")))
+                    val reply = if (command in setOf("start","confirm","deny")) BOT_LOGIN_LINK_UNAVAILABLE else "Операция недоступна: ${f.code}"
+                    enqueue(c,"$updateId:error",chat,"text",obj("text" to str(reply)))
                 } finally { c.releaseSavepoint(sp) }
                 u.optionalText("callbackId")?.let { enqueue(c,"$updateId:callback",chat,"callback",obj("callbackId" to str(it))) }
             }
@@ -186,6 +191,8 @@ class BotWorker(private val identity: Identity, private val social: Social, priv
                 c.exec("UPDATE bot_outbox SET discarded=TRUE WHERE id=?",job.id)
                 if (job.kind in setOf("friends","requests","view"))
                     enqueue(c,"${job.id}:error",job.chat,"text",obj("text" to str("Представление недоступно: ${f.code}")))
+                if (job.kind == "login_prompt")
+                    enqueue(c,"${job.id}:error",job.chat,"text",obj("text" to str(BOT_LOGIN_LINK_UNAVAILABLE)))
                 job to null
             }
         } ?: return false

@@ -107,6 +107,7 @@ services:
     healthcheck: {disable: true}
   bot:
     <<: *runtime
+    image: ${BOT_IMAGE:-${BACKEND_IMAGE:?verified backend image digest required}}
     profiles: [bot]
     command: [bot]
     environment:

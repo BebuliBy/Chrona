@@ -1,5 +1,25 @@
 # Chrona infra: локальные исполняемые заготовки
 
+## Worker87 component split — не повторять rollout
+
+Worker-only help87 rollout выполнен ранее; API остаётся80. `BACKEND_IMAGE`
+выбирает API/default, optional `BOT_IMAGE` — только worker. Parser сохраняет
+отдельный immutable worker image; observer проверяет компоненты раздельно.
+SQL migration прежняя. Gateway/activation guards сохраняются без ослабления.
+
+`scripts/worker_help_rollout.py` — одноразовый bootstrap **из ожидаемого80**,
+с pinned87 JAR SHA, private stdin и явно переданным `--ssh-alias`. Private target,
+hostnames и credential values в source не зашиты; runtime читается на target.
+**Не rerun после успешного87** и не использовать как message/login test.
+Без `--execute` нет artifact/auth reads, SSH или изменений.
+
+Rollback: использовать точные защищённые `worker-help87-<timestamp>` backups,
+остановить только worker, дождаться release/expiry lease, вернуть его прежний
+config/image и запустить только bot `--no-deps`. API/DB/proxy/gateway не
+пересоздавать; offset/inbox/outbox не rewind/replay/delete/drop. Old image хранить.
+Реальный ответ на новое owner `/start` проверяется отдельно; интеграция source
+сама не является новым server/phone/Telegram E2E. Ниже — история bootstrap.
+
 2026-10-18. **Root backend80 API и один bot worker healthy, Telegram auth enabled после owner token install/getMe/webhook verification.** DB/proxy/Serve без изменений, loopback18080 + private HTTPS `/chrona`, Nextcloudroot сохранён. Image `sha256:4d820186b4f15068348e8c9a6b4d9c01099e99285fbd47434c41442c0c3b09b6`, SQL прежний. Verified username только server-private metadata, token не в чат/Git/argv/Env. Runtime activation: [server-deployment](../docs/server-deployment-2026-10-18.md). Real owner login/message/phone E2E ещё не выполнен; ниже bootstrap defaults/historical checks, не указание выключить активного бота.
 
 ### Активация chrona-bot-activation-20261018 выполнена

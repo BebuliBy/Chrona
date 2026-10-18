@@ -431,7 +431,8 @@ baseline=json.loads(P("/var/backups/chrona/bot-activation-prestate-20261018.json
 workers=docker("ps","--filter","label=com.docker.compose.project=chrona","--filter","label=com.docker.compose.service=bot","--format","{{.Names}}").decode().splitlines()
 if workers!=["chrona-bot-1"]:raise RuntimeError("WORKER_COUNT_CONFLICT")
 for name in ("chrona-bot-1","chrona-api-1"):
- if docker("inspect","--format","{{.Image}}",name).decode().strip()!=values["BACKEND_IMAGE"]:raise RuntimeError("UNEXPECTED_IMAGE")
+ expected=values.get("BOT_IMAGE",values["BACKEND_IMAGE"]) if name=="chrona-bot-1" else values["BACKEND_IMAGE"]
+ if docker("inspect","--format","{{.Image}}",name).decode().strip()!=expected:raise RuntimeError("UNEXPECTED_IMAGE")
  cmd(["docker","exec",name,"/bin/sh","-c",'test "$TELEGRAM_AUTH_ENABLED" = true && test -n "$BOT_USERNAME"'])
 networks=json.loads(docker("inspect","--format",'{{json .NetworkSettings.Networks}}',"chrona-bot-1"))
 if set(networks)!={"chrona-app","chrona-proxy-clients"}:raise RuntimeError("WORKER_DIRECT_EGRESS_RISK")

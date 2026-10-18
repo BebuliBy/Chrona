@@ -1,6 +1,16 @@
 # Chrona deployment checkpoint — 2026-10-18
 
-ID основной `chrona-deploy-20261018`, активация `chrona-bot-activation-20261018`, chain archi → sysadmin, без делегаций/Git. **Текущее состояние: backend80 API + один bot worker healthy, Telegram auth enabled; private HTTPS `/chrona` и Nextcloudroot сохранены. Реальный owner login/messages E2E ещё не выполнялся.**
+ID основной `chrona-deploy-20261018`, активация `chrona-bot-activation-20261018`, chain archi → sysadmin, без делегаций/Git.
+
+**Актуально после worker-only rollout:** API80 сохранён, worker87 healthy/один
+poller/restart0/poll progression36s, offset/queues/profile/DB/proxy/Nextcloud/Serve
+сохранены. Public Gateway8443 уже опубликован отдельно, canonical client-origin —
+public root **без `/chrona/`**, телефонный tailnet не обязателен. Native phone
+HTTPS401 подтверждён дважды; JUnit smoke0PASS/2FAIL на test assertions. Старый owner
+challenge expired/unbound; новый Telegram login ещё не принят. Worker87 отвечает
+на новые bare `/start`/`/help` инструкцией без входа. [Новый image/rollback/шаги](bot-login-recovery-2026-10-18.md).
+Ниже — исторические activation/bootstrap checkpoints; их прежние phone-tailnet/
+image80-for-both/bare-start-noop указания не описывают текущее состояние.
 
 ## Актуальная активация после owner hidden token install
 

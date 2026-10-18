@@ -83,6 +83,9 @@ fun normalizeUpdate(update: JsonObject): JsonObject {
     if (from == null || chat == null || chat.optionalText("type") != "private") return base
     val sender = from.longAt("id"); val chatId = chat.longAt("id")
     if (sender <= 0 || sender != chatId || (from["is_bot"] as? JsonPrimitive)?.booleanOrNull != false) return base
+    fun safeLoginCommand(command: String, callbackId: String? = null) = obj("updateId" to num(updateId),
+        "senderId" to num(sender),"chatId" to num(chatId),"command" to str(command),"args" to arr(emptyList()),
+        "callbackId" to callbackId?.let(::str))
     val name = from.optionalText("first_name")?.filterNot { it.isISOControl() }?.take(120) ?: "Chrona user"
     var args: List<String>
     val callbackId: String?
@@ -94,6 +97,16 @@ fun normalizeUpdate(update: JsonObject): JsonObject {
         callbackId = callback.optionalText("id")?.take(200)
     } else {
         val text = message.optionalText("text") ?: return base
+        val trimmed = text.trim()
+        val head = trimmed.takeWhile { !it.isWhitespace() }
+        val known = head.substringBefore('@')
+        if ((known == "/start" || known == "/help") && trimmed == head) return safeLoginCommand("help")
+        // Malformed known login payloads get a generic reply, never raw-text storage.
+        if (known == "/start") {
+            val parts = trimmed.split(Regex("\\s+"),limit=3)
+            if (text.length > 400 || parts.size != 2 || runCatching { uuid(parts[1]) }.isFailure)
+                return safeLoginCommand("invalid_login")
+        }
         if (text.length > 400) return base
         args = text.trim().split(Regex("\\s+"))
         val command = args.first().substringBefore('@')
@@ -109,7 +122,9 @@ fun normalizeUpdate(update: JsonObject): JsonObject {
             "view" -> { uuid(args[1]); ViewRange.parse(args[2],args[3],args[4]) }
             "discover" -> requireWire(args[1] in setOf("on","off"))
         }
-    } catch (_: Fault) { return base }
+    } catch (_: Fault) {
+        return if (args[0] in setOf("start","confirm","deny")) safeLoginCommand("invalid_login",callbackId) else base
+    }
     val nick = if (args[0] == "confirm") from.optionalText("username")?.takeIf { it.matches(Regex("[A-Za-z0-9_]{5,32}")) } else null
     return obj("updateId" to num(updateId), "senderId" to num(sender), "chatId" to num(chatId), "displayName" to str(name), "username" to nick?.let(::str),
         "command" to str(args[0]), "args" to arr(args.drop(1).map(::str)), "callbackId" to callbackId?.let(::str))

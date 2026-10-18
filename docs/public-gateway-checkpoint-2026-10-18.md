@@ -2,6 +2,12 @@
 
 2026-10-18. Пользователь прямо поручил Funnel **отдельным reusable инструментом**, Chrona — первый consumer. Root распараллелил sysadmin/developer. Это ограниченный публичный пилот, не production security/SLA guarantee.
 
+**Последующее состояние:** native phone DNS/global HTTPS401 подтверждены дважды,
+сохранённый target/disabled Save/enabled Login — вторым запуском. Общий JUnit
+0PASS/2FAIL (test-only assertions), последний fix compiled/not-device-rerun.
+Развёрнут worker87, API80 сохранён;87backend/37infra PASS. Реальный Telegram-вход
+ещё ожидается: [rollout и шаги](bot-login-recovery-2026-10-18.md).
+
 ## Независимость
 
 Source **`/home/niki/public-gateway`**, runtime **`/opt/public-gateway`**, private policy/definitions/registry/state `/etc/public-gateway`, backups `/var/backups/public-gateway`. Standalone Python3/stdlib/native Tailscale handlers, без app/SQL/bot/VPN imports. Новый Git/repository не создавался; source в home и на сервере, не внутри Chrona. Durable copy11files,10nonREADME SHA совпали со staging; README русский,14local tests PASS.
@@ -16,7 +22,7 @@ CLI register/validate/plan/apply/status/remove/origin/export-origin — dry-run 
 - External черезexistingSOCKS/publicDoH: DNSglobalIPs, TLS/SNI/CAconnectionименноpublicrelayIPне100tailnet, health200/protected401. Nextcloudstatus/login/DAVна8443→404, Hostsubstitutionнеоткрываетprivate443, внешний443отклоняетTLS. ВнутреннийNextcloudTLSиprivateAPIpathPASS.
 - NativeinitialCLI+actualidempotentETagCASapplyPASS. Generic14local/server, appguards34PASS. Actualsource/registry/Serve/originbackupsсохранены.
 - Одинпозднийexternalrepeat завершилсяошибкойнеустановленнойпричины;stage/class/statusdiagnosticsдобавленыбезURL/body/credentials. СледующийполныйrepeatPASSбезизмененияServe/рестартов. ПовторныйуспехнеSLA.
-- Canonical `/etc/chrona/client-origin` экспортированпослеexternalPASSсoldbackup/явнойсменойscope: **public8443rootбез/chrona/**. Literalhostname/originнеsource/репо. НаphonesTailscaleнеобязателен; nativeдостижимостьпокане проверена.
+- Canonical `/etc/chrona/client-origin` экспортированпослеexternalPASSсoldbackup/явнойсменойscope: **public8443rootбез/chrona/**. Literalhostname/originнеsource/репо. НаphonesTailscaleнеобязателен; последующаяnativeдостижимостьподтвержденаHTTPS401.
 
 ## Client fixes и установка
 
@@ -28,6 +34,10 @@ Full main/test APK/unit/lint PASS: **125Androidunit(117Chrona+8cachedunchangedsp
 
 ОдинPublicConnectionSmokeTestcompiledдляrealMainActivity/безfixtures/privateDB/vault/profileinspection. RuntimeURLarg, DNSpublicsanity, **anonymousGET/v1/me→401**, ownUIConfigureServer/«Сервернастроен»/loginbuttonenabled, **безнажатияlogin/sync/messages**. Ошибкиsanitizeбезtree/URL/body. ПослеAwake/unlockedtestвременносохраняетсвойforegroundwindowkeep-screen-on/restorefinally, безglobaltimeout/wakeup/unlock/VPNchanges.
 
-Desktoppreflightнеподтвердилunlocked/interactivescreen: **OWNER_UNLOCK_REQUIRED**, testAPKнеустановлен, instrumentationне запускалась, **0device tests**.14bodiescompiled(13UI+1native), не14ran. Network/configsave/nativeKeystorePASSпоканет. Послеownerunlock/Tailscaleoffrootзапуститровнооднуclass-пробу; потомownerсамначнёт/подтвердитgeneratedTelegramlogin. [Probe](phone-public-smoke-2026-10-18.md).
+Первоначальный preflight OWNER_UNLOCK_REQUIRED не запустил tests. После новых owner
+подтверждений тот же один class запускался дважды: **0PASS/2FAIL**, оба раза native
+DNSglobal/HTTPS401; повтор readonly подтвердил уже сохранённый target и enabled Login.
+Последний substring assertion fix compiled, не rerun. Остальные13 UI bodies не ran.
+Пока owner входит, не запускать instrumentation/reinstall/restart. [Probe](phone-public-smoke-2026-10-18.md).
 
 Неудалятьapp/DB/неповторятьtokeninstall: worker/authужеактивны. СтарыйboundtargetможетдатьACCOUNT_BINDING_CONFLICT—требуетсяявныйreview,неclear-data/automerge. Остальныеyear/streak/coverage/avatar/invites/defaults/release иполнаяphone/TG/sharingE2Eприёмкаостаютсяв[integration](integration-2026-10-18.md).

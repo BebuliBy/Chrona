@@ -17,7 +17,7 @@ BACKUPS = Path("/var/backups/chrona")
 DOCKER = ["/usr/bin/docker", "--host", "unix:///var/run/docker.sock"]
 SAFE_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
 FILES = {"chrona": "compose.app.yml", "chrona-proxy": "compose.proxy.yml", "chrona-restore": "compose.restore.yml"}
-KEYS = {"XRAY_IMAGE", "POSTGRES_IMAGE", "BACKEND_IMAGE", "BACKEND_CONTRACT", "CPU_SMOKE", "TELEGRAM_AUTH_ENABLED", "API_HOST_PORT"}
+KEYS = {"XRAY_IMAGE", "POSTGRES_IMAGE", "BACKEND_IMAGE", "BOT_IMAGE", "BACKEND_CONTRACT", "CPU_SMOKE", "TELEGRAM_AUTH_ENABLED", "API_HOST_PORT"}
 ACTIONS = ("init-data", "preflight", "xray-test", "deploy-proxy", "deploy-db", "migrate", "deploy-app", "deploy-bot", "enable-telegram", "disable-telegram", "stop-app", "stop-proxy", "backup", "restore", "stop-restore")
 
 
@@ -57,6 +57,8 @@ def parse_metadata(text, required=("XRAY_IMAGE", "POSTGRES_IMAGE", "BACKEND_IMAG
             raise ValueError("verified pinned image refs required")
         if len(set(value.rsplit(":", 1)[1])) < 4:
             raise ValueError("obvious dummy digest forbidden")
+    if "BOT_IMAGE" in result and not re.fullmatch(r"sha256:[a-f0-9]{64}", result["BOT_IMAGE"]):
+        raise ValueError("immutable local worker image ID required")
     if "XRAY_IMAGE" in required and not result["XRAY_IMAGE"].startswith("ghcr.io/xtls/xray-core:26.3.27@"):
         raise ValueError("unreviewed Xray source/version")
     if "POSTGRES_IMAGE" in required and not result["POSTGRES_IMAGE"].startswith("postgres:17-alpine@"):

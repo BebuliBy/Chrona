@@ -26,6 +26,7 @@ probe = load("probe")
 remote = load("remote_baseline")
 token_installer = load("install_bot_token")
 deployment = load("deployment")
+worker_rollout = load("worker_help_rollout")
 serve = load("serve")
 with patch("sys.path", [str(ROOT / "scripts"), *sys.path]):
     bot_config = load("configure_bot")
@@ -95,6 +96,27 @@ class GeneratorTests(unittest.TestCase):
 
 
 class SafetyTests(unittest.TestCase):
+    def test_worker_rollout_remote_syntax(self):
+        import ast
+        ast.parse(worker_rollout.REMOTE)
+
+    def test_worker_rollout_default_no_artifact_auth_or_ssh(self):
+        with patch("sys.argv", ["worker_rollout"]), patch.object(worker_rollout.subprocess, "run", side_effect=AssertionError("SSH")), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(worker_rollout.main(), 0)
+        with patch("sys.argv", ["worker_rollout", "--execute", "--password-stdin"]), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                worker_rollout.main()
+
+    def test_worker_image_metadata_independent_and_retained(self):
+        import hashlib
+        a = hashlib.sha256(b"synthetic API image fixture").hexdigest()
+        b = hashlib.sha256(b"synthetic worker image fixture").hexdigest()
+        data = "XRAY_IMAGE=ghcr.io/xtls/xray-core:26.3.27@sha256:" + a + "\nPOSTGRES_IMAGE=postgres:17-alpine@sha256:" + a + "\nBACKEND_IMAGE=sha256:" + a + "\nBOT_IMAGE=sha256:" + b + "\nCPU_SMOKE=approved-baseline-amd64\nTELEGRAM_AUTH_ENABLED=true\n"
+        metadata = ops.parse_metadata(data)
+        self.assertNotEqual(metadata["BACKEND_IMAGE"], metadata["BOT_IMAGE"])
+        with self.assertRaises(ValueError):
+            ops.parse_metadata(data.replace("BOT_IMAGE=sha256:" + b, "BOT_IMAGE=unverified:latest"))
+
     def test_serve_default_no_private_state_or_cli(self):
         with patch("sys.argv", ["serve", "apply"]), patch.object(serve, "config", side_effect=AssertionError("read")), patch.object(serve, "call", side_effect=AssertionError("CLI")), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(serve.main(), 0)
@@ -291,6 +313,8 @@ class ComposeTests(unittest.TestCase):
         self.assertEqual(services["api"]["environment"]["SECRETS_PATH"], "/run/secrets/chrona")
         self.assertNotIn("telegram-token", json.dumps(services["api"]))
         self.assertEqual(services["migrate"]["command"], ["migrate"])
+        self.assertIn("BOT_IMAGE", services["bot"]["image"])
+        self.assertNotIn("BOT_IMAGE", services["api"]["image"])
         self.assertEqual(services["api"]["environment"]["TELEGRAM_AUTH_ENABLED"], "${TELEGRAM_AUTH_ENABLED:-false}")
         self.assertNotIn("BOT_USERNAME", services["api"]["environment"])
         self.assertNotIn("BOT_USERNAME", services["migrate"]["environment"])

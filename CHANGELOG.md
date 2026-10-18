@@ -2,6 +2,24 @@
 
 Здесь только факты внесённых изменений. Планы — в docs/roadmap.md, принятые решения — в docs/decisions.md. Разработка функций не считается выполненной по одному описанию.
 
+## 2026-10-18 — ответы бота и worker-only87 rollout
+
+- Исправлено молчание на новых bare `/start`/`/help`: инструкция через durable
+  outbox без выбора/привязки challenge/account/session. Valid fresh UUID сохраняет
+  confirm/deny; ошибочные/expired/чужие links/callbacks дают одинаковый generic error.
+  PKCE/TTL/Identity/SQL guards не ослаблены, processed noop не переигрывается.
+- Backend87/87 и MAIN infra37/37 PASS. Worker87 развёрнут отдельно, API80 сохранён;
+  SIGTERM/lease перед заменой, ровно один healthy poller/restart0/36s progression,
+  offset/queues/DB/proxy/Nextcloud/Serve/private443/gateway сохранены. Added optional
+  BOT_IMAGE, component-aware observer и pinned bootstrap script (не rerun после87).
+- Два реальных native smoke:0PASS/2FAIL на UI assertions, оба DNSglobal/HTTPS401;
+  второй readonly повтор подтвердил сохранённый target/disabledSave/enabledLogin.
+  Test-only merged predicate/already-saved branch/substring assertion исправлены;
+  последний test APK compiled, не device rerun во время owner login. Main не менялся.
+- Старый owner challenge expired/unbound/sessions0; точный raw input noop неизвестен.
+  Вход и ответ на новое сообщение ещё не приняты. Агенты сообщений/confirmation/
+  exchange не делали. [Актуальный порядок](docs/bot-login-recovery-2026-10-18.md).
+
 ## 2026-10-17 — исходная документация
 
 - Созданы README, проектные AGENTS и связанные документы требований, архитектурного направления, решений, плана и Accessibility spike.
