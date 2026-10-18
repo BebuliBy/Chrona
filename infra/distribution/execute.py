@@ -21,7 +21,6 @@ import tempfile
 SOURCE = Path(__file__).resolve().parent
 MAIN = SOURCE.parents[1]
 APK_SHA = "87d3c606c565b9e2e09db780806612d7388552a51e8227e47c8eb1709f31250c"
-API_SHA = "c1cc832af4693932ddd5dd4b79a86f36ec78d403bf8f4134cf56629e23c04589"
 SDK = Path("/home/niki/Android/Sdk/build-tools/36.0.0")
 
 PREAMBLE = r'''
@@ -207,15 +206,26 @@ API = r'''
 stage="api_backup_stage"
 ROOT=P("/opt/chrona/infra");env=P("/etc/chrona/runtime.env");old=env.read_bytes();values=dict(line.split("=",1) for line in old.decode().splitlines() if line)
 if values.get("TELEGRAM_AUTH_ENABLED")!="true" or not values.get("BOT_IMAGE"):raise RuntimeError("AUTH_WORKER_SPLIT_NOT_PRESERVED")
+if inspect("chrona-api-1","{{.Image}}")!=values["BACKEND_IMAGE"]:raise RuntimeError("ACTIVE_API_IMAGE_RUNTIME_DRIFT")
 baseline={name:(inspect(name,"{{.Id}}"),inspect(name,"{{.Image}}")) for name in ("chrona-bot-1","chrona-db-1","chrona-proxy-xray-proxy-1","chrona-distribution-publisher-1")}
 cfg,_=g.api_get();mapping=json.dumps(cfg,sort_keys=True)
-stamp=str(time.time_ns());backup=P("/var/backups/chrona")/("api-namefix-"+stamp);backup.mkdir(mode=0o700)
+stamp=str(time.time_ns());backup=P("/var/backups/chrona")/("api-release-"+stamp);backup.mkdir(mode=0o700)
 write_new(backup/"runtime.env",old)
 write_new(backup/"image-metadata.json",json.dumps({"prior_api_image":values["BACKEND_IMAGE"],"worker_image":values["BOT_IMAGE"]}).encode())
-with tarfile.open(backup/"previous-source.tar","w") as a:a.add(ROOT/"backend",arcname="backend")
+active_jar=run(["docker","exec","chrona-api-1","sha256sum","/opt/chrona/lib/chrona-backend-0.1.0.jar"]).decode().split()[0]
+active_source=None
+for pattern in ("api-release-*","api-namefix-*"):
+ for candidate in P("/opt/chrona").glob(pattern):
+  file=candidate/"distribution/lib/chrona-backend-0.1.0.jar"
+  if candidate.is_dir() and not candidate.is_symlink() and file.is_file() and not file.is_symlink() and hashlib.sha256(file.read_bytes()).hexdigest()==active_jar:active_source=candidate;break
+ if active_source:break
+if active_source is None:raise RuntimeError("ACTIVE_API_SOURCE_CONTEXT_NOT_FOUND_OLD_API_UNCHANGED")
+with tarfile.open(backup/"previous-source.tar","w") as a:
+ a.add(ROOT/"backend",arcname="bootstrap-backend")
+ if active_source:a.add(active_source,arcname="active-api-release")
 os.chmod(backup/"previous-source.tar",0o600)
 run(["python3",str(ROOT/"scripts/ops.py"),"backup","--execute","--approved"])
-release=P("/opt/chrona")/("api-namefix-"+stamp);release.mkdir(mode=0o755)
+release=P("/opt/chrona")/("api-release-"+stamp);release.mkdir(mode=0o755)
 with tarfile.open(fileobj=io.BytesIO(base64.b64decode(payload["api_tar"])),mode="r:") as archive:
  for member in archive:
   rel=P(member.name)
@@ -227,8 +237,10 @@ with zipfile.ZipFile(jar) as z:checksum=base64.urlsafe_b64encode(hashlib.sha256(
 if app("exec","-T","db","psql","-U","chrona","-d","chrona","-Atc","SELECT checksum FROM schema_migrations WHERE version=1").decode().strip()!=checksum:raise RuntimeError("API_SQL_CHECKSUM_CHANGED")
 pins=json.loads((ROOT/"verified-images-2026-10-18.json").read_text());jre="eclipse-temurin:17-jre-jammy@"+pins["jre"]["amd64_digest"]
 docker("image","inspect","--format","{{.Id}}",jre)
-docker("build","--pull=false","--network","none","--build-arg","JVM_IMAGE="+jre,"-t","chrona-backend:api-namefix-20261018",str(release))
-new=docker("image","inspect","--format","{{.Id}}","chrona-backend:api-namefix-20261018").decode().strip()
+docker("tag",values["BACKEND_IMAGE"],"chrona-backend:api-rollback-"+stamp)
+tag="chrona-backend:api-release-"+payload["api_sha"][:12]
+docker("build","--pull=false","--network","none","--build-arg","JVM_IMAGE="+jre,"-t",tag,str(release))
+new=docker("image","inspect","--format","{{.Id}}",tag).decode().strip()
 values["BACKEND_IMAGE"]=new
 try:
  replace(env,''.join(k+'='+v+'\n' for k,v in values.items()).encode())
@@ -242,7 +254,7 @@ try:
 except BaseException:
  replace(env,old);app("--profile","api","up","-d","--no-deps","--no-build","--pull","never","--wait","--wait-timeout","180","api")
  print("API_ONLY_ROLLBACK_PREVIOUS_IMAGE_METADATA_RESTORED",flush=True);raise
-print("API_NAMEFIX_HEALTHY_SQL_UNCHANGED_WORKER87_DB_PROXY_PUBLISHER_GATEWAY_UNCHANGED",flush=True)
+print("API_RELEASE_HEALTHY_SQL_UNCHANGED_WORKER87_DB_PROXY_PUBLISHER_GATEWAY_UNCHANGED",flush=True)
 print("API_IMAGE="+new,flush=True);print("API_ROLLBACK_DIRECTORY="+str(backup),flush=True)
 '''
 
@@ -307,6 +319,7 @@ def main():
     p.add_argument("--ssh-alias")
     p.add_argument("--password-stdin", action="store_true")
     p.add_argument("--state", type=Path)
+    p.add_argument("--api-sha256", help="explicit approved MAIN API app-JAR digest; no stale release default")
     a = p.parse_args()
     if not a.execute:
         print("DRY-RUN deployment; no artifact/auth/runtime reads or network")
@@ -343,10 +356,15 @@ def main():
             print("LOCAL_STATE=" + str(path))
             print(json.dumps(meta, sort_keys=True))
             return 0
-        if not a.state or a.state.is_symlink() or not a.ssh_alias or not re.fullmatch(r"[A-Za-z0-9_-]+", a.ssh_alias) or not a.password_stdin:
+        if not a.ssh_alias or not re.fullmatch(r"[A-Za-z0-9_-]+", a.ssh_alias) or not a.password_stdin or a.phase!="api" and (not a.state or a.state.is_symlink()):
             p.error("public-metadata state, explicit confirmed alias/private stdin required")
-        state = json.loads(a.state.read_text())
-        payload = {"meta": state["meta"]}
+        if a.phase=="api":
+            if not a.api_sha256 or not re.fullmatch(r"[a-f0-9]{64}", a.api_sha256):
+                p.error("explicit approved API JAR SHA256 required")
+            payload = {}
+        else:
+            state = json.loads(a.state.read_text())
+            payload = {"meta": state["meta"]}
         if a.phase in ("install", "fix-source"):
             files = {}
             for name in ("Dockerfile", ".dockerignore", "server.php", "compose.yml", "publish_store.py", "release.py", "README.md", "empty-root/.keep"):
@@ -359,7 +377,7 @@ def main():
         elif a.phase == "api":
             dist = MAIN / "backend/build/install/chrona-backend"
             jar = dist / "lib/chrona-backend-0.1.0.jar"
-            if hashlib.sha256(jar.read_bytes()).hexdigest() != API_SHA:
+            if hashlib.sha256(jar.read_bytes()).hexdigest() != a.api_sha256:
                 raise ValueError("APPROVED_ROOT_API_JAR_MISMATCH")
             buffer = io.BytesIO()
             with tarfile.open(fileobj=buffer, mode="w") as tar:
@@ -370,7 +388,7 @@ def main():
                 context = SOURCE.parent / "backend"
                 for name in ("Dockerfile", ".dockerignore"):
                     tar.add(context / name, arcname=name, recursive=False)
-            payload.update({"api_tar": base64.b64encode(buffer.getvalue()).decode(), "api_sha": API_SHA})
+            payload.update({"api_tar": base64.b64encode(buffer.getvalue()).decode(), "api_sha": a.api_sha256})
         auth = sys.stdin.buffer.readline(1025).rstrip(b"\r\n")
         if not auth:
             raise ValueError("PRIVATE_AUTH_MISSING")

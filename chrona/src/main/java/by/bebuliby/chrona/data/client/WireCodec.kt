@@ -139,7 +139,12 @@ object WireCodec {
             stamp(it, "startUtc"), stamp(it, "endUtc"), number(it, "durationMillis"), enum(text(it, "quality"))) }
         val gaps = objects(j.getJSONArray("gaps")).map { gap(it) }
         fun validDay(day: DayKey) = day.zoneId == range.zoneId && day.date >= range.fromInclusive && day.date < range.toExclusive
-        if (cells.any { !validDay(it.day) || (it.goal != null && (it.goal.habitId != it.habitId || it.goal.requestedFrom != it.day)) } ||
+        if (cells.any { cell -> !validDay(cell.day) || (cell.goal?.let { goal ->
+                goal.habitId != cell.habitId ||
+                    if (habits.first { it.id == cell.habitId }.collectionMode == CollectionMode.AUTOMATIC_SHORTS)
+                        goal.requestedFrom.zoneId != cell.day.zoneId || goal.requestedFrom.date > cell.day.date
+                    else goal.requestedFrom != cell.day
+            } == true) } ||
             cells.map { it.habitId to it.day }.distinct().size != cells.size ||
             intervals.any { it.habitId !in habits.map(Habit::id) || it.durationMillis < 0 } ||
             gaps.any { it.habitId !in habits.map(Habit::id) } ||

@@ -118,7 +118,7 @@ internal fun HabitDetails(
         allowZero = true, busy = busy, onDismiss = { editActual = false },
     ) { value -> dispatch(ChronaAction.SaveManualValue(habit.id, cell.day, value)); editActual = false }
     if (editGoal && cell.canEditGoal) NumberDialog(
-        title = "${if (habit.direction == GoalDirection.AT_MOST) "Лимит" else "Минимум"} · ${shortDateFormat.format(cell.day.date)}",
+        title = if (habit.collectionMode == CollectionMode.AUTOMATIC_SHORTS) "Лимит с ${shortDateFormat.format(cell.day.date)}" else "${if (habit.direction == GoalDirection.AT_MOST) "Лимит" else "Минимум"} · ${shortDateFormat.format(cell.day.date)}",
         unit = habit.unit, initial = cell.goal?.amount,
         allowZero = habit.direction == GoalDirection.AT_MOST, busy = busy, onDismiss = { editGoal = false },
     ) { value -> dispatch(ChronaAction.SaveGoal(habit.id, value, cell.day)); editGoal = false }

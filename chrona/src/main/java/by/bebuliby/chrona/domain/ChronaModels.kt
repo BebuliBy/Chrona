@@ -26,7 +26,7 @@ data class Habit(
     val revision: String? = null,
 )
 
-/** Immutable revision; requested applicability does not silently rewrite historical cells. */
+/** Immutable revision: requestedFrom is effective-from for AUTOMATIC_SHORTS, exact-day for MANUAL. */
 data class GoalRevision(
     val id: String,
     val habitId: String,

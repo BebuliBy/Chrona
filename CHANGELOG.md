@@ -1,5 +1,16 @@
 # История изменений
 
+## 2026-10-19 — 0.4.1-goals опубликована
+
+- Shorts limit теперь effective-from/samezone до следующего изменения, а не
+  только один день. Append-only facts/старые целевые значения не переписываются;
+  manual exact-day неизменён. Wire/server permitted-day projections согласованы.
+- Version7 APK/manifest опубликован штатно, прежнийcode6 сохранён неизменно;
+  отдельный API-only refresh без worker/DB/publisher/gateway changes.
+- Root assemble1m13s/installDist14s PASS, безtests/lint. Owner устанавливает через
+  in-app updater и подтвердил успешное обновление. В дальнейшем доставка так же;
+  отдельного phone/DB inspection не было.
+
 ## 2026-10-19 — опубликована0.4.0-update
 
 - Stable APK/manifest/immutable releases на отдельном public gateway consumer.

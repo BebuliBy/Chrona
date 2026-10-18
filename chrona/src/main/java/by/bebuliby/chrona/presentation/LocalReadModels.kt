@@ -6,11 +6,18 @@ import java.math.RoundingMode
 import java.time.Instant
 import java.time.ZoneId
 
-/** Exact-day requests resolve only that day. No recurrence, goal inheritance or streak policy. */
+/** Shorts limits are effective-from in the same explicit zone; manual goals remain exact-day. */
 object LocalReadModels {
     fun cell(habit: Habit, day: DayKey, facts: LocalFacts, localDeviceId: String? = null): DayCell {
-        val goal = facts.goals.filter { it.habitId == habit.id && it.requestedFrom == day }
-            .lastOrNull() // immutable rows arrive in local insertion order; no random UUID tie-break
+        val applicable = facts.goals.filter {
+            it.habitId == habit.id && it.requestedFrom.zoneId == day.zoneId &&
+                if (habit.collectionMode == CollectionMode.AUTOMATIC_SHORTS) it.requestedFrom.date <= day.date
+                else it.requestedFrom.date == day.date
+        }
+        val latestEffectiveDate = applicable.maxOfOrNull { it.requestedFrom.date }
+        // Most recent effective date wins, then the established local insertion order for that date.
+        // Never rank revisions by random UUID, wall clock, or overwrite/copy a historical entity.
+        val goal = applicable.lastOrNull { it.requestedFrom.date == latestEffectiveDate }
         val entry = facts.entries.find { it.habitId == habit.id && it.day == day }
         val actual = if (habit.collectionMode == CollectionMode.MANUAL) {
             entry?.let { ActualValue.Known(it.value, FactSource.MANUAL) }

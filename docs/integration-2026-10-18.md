@@ -1,5 +1,11 @@
 # Chrona — интеграционный checkpoint 2026-10-18
 
+**Latest2026-10-19:** code7/0.4.1-goals built+published mandatory update;
+effective-from Shorts limit/clientWire/serverreadmodels, APIonly image c49af50a…,
+SQLsame/workerDBpublishergatewaypreserved. Root appassemble1m13s/backendinstallDist14s,
+безtests/lint. Userсампробуетinappupdate, install7/runtimegoalacceptanceпоканеподтверждены.
+[Release7](effective-goal-release-2026-10-19.md).
+
 **Latest continuation2026-10-19:** code6/0.4.0-update built и опубликован по
 permanent `/updates/chrona/latest.apk`; mandatory update UI, welcome, dates,
 notice3s, friendperiod/names, sync immediate/5s foreground/target10min background.

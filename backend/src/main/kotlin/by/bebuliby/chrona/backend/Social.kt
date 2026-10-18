@@ -177,7 +177,18 @@ class Social(private val identity: Identity, private val activities: Activities)
             return d.text("zoneId") == range.zone.id && LocalDate.parse(d.text("date")) in fullDays
         }
         val entries = activities.records(c, owner, "manual_entry").filter { exactDay(it,"day") }
-        val goals = activities.records(c, owner, "goal_revision").filter { exactDay(it,"requestedFrom") }
+        val goals = if (fullDays.isEmpty()) emptyList() else {
+            // Access first: owner/habit/zone constrained configuration candidates. A Shorts
+            // limit set before the visible period may still configure an allowed day.
+            val candidates = activities.records(c,owner,"goal_revision").filter {
+                it.payload.text("habitId") in habitIds && it.payload.objectAt("requestedFrom").text("zoneId") == range.zone.id
+            }
+            // Retain only revisions actually selected for authorized full-day cells, not
+            // unrelated pre-window history, superseded revisions or future configuration.
+            fullDays.flatMap { date -> habits.mapNotNull { habit ->
+                ActivityViews.applicableGoal(habit,date,range.zone.id,candidates)
+            } }.distinctBy { it.id }
+        }
         // Segment payloads and device IDs never enter the public projection. Keep only
         // per-authorized-cell evidence/ambiguity flags, after the same habit/time ACL.
         val segments = activities.records(c, owner, "observation_segment").filter {

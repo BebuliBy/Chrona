@@ -1,5 +1,15 @@
 # Журнал решений
 
+## DEC-023 — effective Shorts limit и штатная доставка через updater
+
+2026-10-19, явное подтверждение владельцем предложенного правила: лимит действует
+с выбранного дня до следующего изменения, новый сегодняшний не подменяет вчерашний.
+Только automatic Shorts, samezone/habit/latesteffective date; manual exact-day
+остаётся, oldraw/goals append-only. Wire/server/local views согласованы.
+User также поручил с этого момента получать новые релизы через in-app update,
+не USB/ручную пересылку. Code7 опубликован, владелец подтвердил успешный in-app install.
+[Правило](effective-shorts-limit-2026-10-19.md), [доставка](effective-goal-release-2026-10-19.md).
+
 ## DEC-022 — mandatory updater, welcome и точный foreground/background contract
 
 2026-10-18/19, прямой запрос и подтверждение server плана. Stable APK/manifest

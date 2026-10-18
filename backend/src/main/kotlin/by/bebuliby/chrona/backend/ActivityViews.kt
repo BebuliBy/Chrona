@@ -6,8 +6,9 @@ import java.math.MathContext
 import java.time.LocalDate
 
 /** A pure projection of ALREADY authorized facts. No SQL, grants or fallback policies here.
- * Matches core LocalReadModels: exact DayKey goals only, append order for same-day
- * revisions, missing manual != zero, no recurrence/streak/complete-coverage inference.
+ * Shorts configuration is effective from requestedFrom in the SAME zone until a
+ * newer effective day. Manual goals remain exact-day only. Same-day revisions use
+ * server append order; no client-clock/UUID tie-break or general recurrence policy.
  */
 object ActivityViews {
     private val mc = MathContext.DECIMAL128
@@ -31,11 +32,25 @@ object ActivityViews {
 
     private fun goalDto(g: StoredEntity) = JsonObject(g.payload + ("revision" to str(g.revision)))
 
+    internal fun applicableGoal(habit: StoredEntity, date: LocalDate, zoneId: String, goals: List<StoredEntity>): StoredEntity? {
+        val shorts = habit.payload.text("collectionMode") == "automatic_shorts"
+        return goals.filter { goal ->
+            if (goal.payload.text("habitId") != habit.id) false else {
+                val requested = goal.payload.objectAt("requestedFrom")
+                val effectiveDate = LocalDate.parse(requested.text("date"))
+                requested.text("zoneId") == zoneId && (if (shorts) effectiveDate <= date else effectiveDate == date)
+            }
+        }.maxWithOrNull(compareBy<StoredEntity>(
+            { LocalDate.parse(it.payload.objectAt("requestedFrom").text("date")) },
+            { it.revision.toLong() }, // existing deterministic server append order within one effective day
+        ))
+    }
+
     private fun cell(h: StoredEntity, date: LocalDate, range: ViewRange, facts: VisibleFacts, isOwner: Boolean, today: LocalDate): Cell {
         val key = day(date,range)
         val fullDay = date in facts.fullDays
-        val goal = facts.goals.filter { it.payload.text("habitId") == h.id && it.payload["requestedFrom"] == key }
-            .maxByOrNull { it.revision.toLong() } // server append order, never client clock or random UUID
+        // Inherited configuration is not permission to expose a partially authorized day.
+        val goal = if (fullDay) applicableGoal(h,date,range.zone.id,facts.goals) else null
         val manual = h.payload.text("collectionMode") == "manual"
         val actual = if (manual) {
             val entry = facts.entries.singleOrNull { it.payload.text("habitId") == h.id && it.payload["day"] == key }

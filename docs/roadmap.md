@@ -1,5 +1,10 @@
 # План и фактическое состояние
 
+**Latest2026-10-19:** effective-from Shorts limits реализованы/согласованы поwire/
+server, code7/0.4.1-goals опубликован, APIonly обновлён. User пробует штатную
+установку из Chrona; delivery теперь по updater. Manual recurrence/series/history
+policy не объявлены реализованными. [Release7](effective-goal-release-2026-10-19.md).
+
 **Latest continuation2026-10-19:**0.4.0-update/code6 compiled/published permanentAPK
 и manifest, API namesdeployed. Mandatorygate/welcome/calendar/3snotices/friendperiod/
 cadence5s/10min source реализован; phone install/actual mandatoryflow ещё ожидаются,

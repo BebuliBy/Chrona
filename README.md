@@ -4,6 +4,15 @@ Android/Kotlin-трекер привычек: автоматический Short
 
 ## Статус на 2026-10-18
 
+**Latest2026-10-19:0.4.1-goals/code7 опубликована для in-app update.** Лимит Shorts
+действует с выбранного дня ежедневно до следующего изменения; сегодняшний новый
+лимит не применяется к вчерашней клетке. Применимое правило согласовано между
+local/server views и wire; manual goals пока exact-day. API-only refresh выполнен,
+прошлые raw/revisions не переписывались. Root assemble/installDist PASS, безtests/lint.
+Владелец подтвердил **успешное обновление до7 внутри Chrona**. По его
+прямому уточнению дальнейшая доставка — через updater, не USB/пересылка APK.
+[Правило](docs/effective-shorts-limit-2026-10-19.md), [публикация](docs/effective-goal-release-2026-10-19.md).
+
 **Релиз0.4.0-update/code6 опубликован (продолжение2026-10-19).** Постоянный путь
 `/updates/chrona/latest.apk`, manifest `latest.json` и immutable releases доступны
 через отдельный gateway consumer; полное значение ссылки передаётся владельцу,
