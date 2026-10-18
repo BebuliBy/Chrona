@@ -1,8 +1,13 @@
 # Chrona
 
-Android/Kotlin-трекер привычек: автоматический Shorts, ручные значения и цели, история, собственные API/SQL и Telegram-бот. **Выбран вариант Б, включая будущие согласованные серии дней.** UI-v2, локальное хранилище/collector, Android API-клиент и backend реализованы; серверный checkpoint развёрнут. Сквозная Telegram/phone-приёмка ещё не выполнена — это не готовый production-релиз.
+Android/Kotlin-трекер привычек: автоматический Shorts, ручные значения и цели, история, собственные API/SQL и Telegram-бот. **Выбран вариант Б, включая будущие согласованные серии дней.** UI-v2, локальное хранилище/collector, Android API-клиент и backend реализованы; серверный checkpoint развёрнут. Владелец подтвердил успешный Telegram-вход на телефоне; sync/friend/recovery-приёмка ещё не выполнена — это не готовый production-релиз.
 
 ## Статус на 2026-10-18
+
+**Обновление владельца:** «Я уже вошёл, всё успешно». Реальный вход подтверждён
+пользователем после worker87, повторять его не нужно. Новых SQL/ADB/vault проверок
+агенты не выполняли; sync/друзья/восстановление и весь instrumentation suite этим
+не приняты. Передача истории требует отдельного явного согласия.
 
 - Распространение сначала **для себя и друзей**, без обязательного Google Play.
 - `chrona`: LOCAL state, Room **schema3 / migrations1→2→3**, DataStore, raw outbox, source guards и collector. Schema3 хранит exact operation IDs одноразового sync consent; будущие записи ждут нового подтверждения. Fixtures только preview; diagnostic `app` отдельно.
@@ -12,7 +17,7 @@ Android/Kotlin-трекер привычек: автоматический Short
 - **Публичный API:** standalone Public Gateway опубликован через Funnel8443; **телефонам Tailscale не нужен**. Source `/home/niki/public-gateway`, server `/opt/public-gateway`; Chrona — лишь [первый consumer](infra/public-gateway-integration.md), generic source не часть app repo. Private443/Nextcloud и прежний `/chrona` сохранены. Это ограниченный пилот, не production/SLA guarantee.
 - Xray10808 — отдельный private Docker outbound proxy, не ingress. API/bot/PG не пересоздавались при публикации. External global relay/SNI/CA/health200/protected401, Nextcloud404 на8443 и внешний443 TLSdeny проверены, privateNextcloud работает. Router/firewall/globalVPN вручную не менялись.
 - Build **PASS**: **125 Android unit** (117Chrona+8unchangedcachedspike), SQLite **5/5**, app infra guard **37/37**, generic gateway **14/14** local/server, backend **87/87**. Lint **0errors/17warnings**. APK **0.3.1-fix/code3 установлен install-r**, own launch/resumed PASS. Native probe реально запускалась **дважды: 0PASS/2FAIL** на UI assertions; оба раза DNS global/нативный HTTPS `/v1/me`→401. Второй запуск подтвердил уже сохранённый target/disabled Save/enabled Login. Последний test-only fix скомпилирован, на телефоне не повторялся.
-- Владелец установил token скрыто; verified worker/API auth активны. Развёрнут **только worker87** с ответами на новые bare `/start`/`/help`, API остался80; один healthy poller/restart0/poll progression36s, offset/queues сохранены. Старый owner challenge истёк без Telegram binding/сессии. Сообщений/входа вместо owner не было; настоящий login/sync/friend flow и Telegram-avatar endpoint ещё не приняты. [Текущий вход/rollout](docs/bot-login-recovery-2026-10-18.md), [публикация/фиксы](docs/public-gateway-checkpoint-2026-10-18.md).
+- Владелец установил token скрыто; verified worker/API auth активны. Развёрнут **только worker87** с ответами на новые bare `/start`/`/help`, API остался80; один healthy poller/restart0/poll progression36s, offset/queues сохранены. Старый challenge истёк; после исправления владелец подтвердил **успешный вход**. Сообщений/входа вместо owner не было; sync/friend flow и Telegram-avatar endpoint ещё не приняты. [Вход/rollout](docs/bot-login-recovery-2026-10-18.md), [публикация/фиксы](docs/public-gateway-checkpoint-2026-10-18.md).
 - Годовой layout, recurrence/streak/история целей, complete/partial coverage и zero-limit curve/эмоция открыты; неизвестное не ноль. Из-за неполного Shorts общий score/цвет может быть Unavailable. [Интеграция и остатки](docs/integration-2026-10-18.md).
 - Работа реально делегирована обычным developer UI/core/backend и sysadmin с разделёнными ownership/worktrees. Новых ролей нет; временные variants специалистов возвращены Medium, без повторных High-проверок по просьбе пользователя.
 
@@ -57,5 +62,5 @@ Android/Kotlin-трекер привычек: автоматический Short
 1. Hidden token-install и verified profile/worker/API auth activation **уже выполнены**; повторно token не вводить и не создавать второй poller.
 2. Code3 установлен, native связь и сохранённая конфигурация подтверждены ограниченными проверками; общий JUnit не PASS. Пока владелец выполняет вход, **не запускать instrumentation/reinstall/restart/clear-data**. [Probe и два результата](docs/phone-public-smoke-2026-10-18.md).
 3. Canonical base URL получить: `ssh -t server 'sudo -- cat /etc/chrona/client-origin'`. После external PASS это **public8443 root без `/chrona/`**; не дописывать прежний prefix, не требовать phone tailnet. Runtime URL не вшит в APK. Code3 исправляет поддержку safe base prefix и one-shot consent: [fixes](docs/client-fixes-2026-10-18.md).
-4. У старого pending проверить статус, чтобы очистить истёкший запрос; начать **новый вход из Chrona**, открыть новую Telegram-ссылку, при необходимости «Запустить», подтвердить только собственный запрос и вернуться/проверить статус в пределах5мин. Worker87 на bare `/start`/`/help` отвечает инструкцией, но не выбирает последний challenge и не выполняет login. Не придумывать requestId и не подтверждать вместо владельца.
+4. Владелец **уже успешно вошёл**, не просить повторять login/сбрасывать сессию. Процедура нового входа сохранена в [отчёте](docs/bot-login-recovery-2026-10-18.md) только на будущий случай; bare `/start`/`/help` не выполняет login.
 5. Проверить настоящий sync/friend ACL/revoke/восстановление и закрыть точечные правила streak/year/coverage/avatar. Продолжать обычными ролями; один root Git-интегратор, без новых обязательных агентов/restart.

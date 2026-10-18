@@ -21,6 +21,11 @@
 
 ## Выполненный checkpoint 2026-10-18 — актуальнее прежней таблицы плана
 
+- **Последний результат:** владелец подтвердил «Я уже вошёл, всё успешно» — реальный
+  Telegram-вход завершён по его подтверждению. Повтор login не нужен; следующий
+  этап — отдельно согласованный bounded sync, затем ACL/recovery. Новых runtime
+  проверок/отправки истории от агентов не было; результаты ниже исторические.
+
 - **Latest:** gateway/Chrona consumer8443/private443 unchanged/external matrix/generic14 PASS.125Androidunit/SQLite5/0err17warn, APK0.3.1-fix/code3 installed-r/launchPASS. Native probe2runs/0PASS/2FAIL на test assertions; DNSglobal/nativeHTTPS401 оба раза, already-saved target/disabledSave/enabledLogin во втором. Last test-only assertion fix compiled/not-device-rerun. Backend87/infra37 PASS; worker87 deployed с `/start`/`/help`, API80 неизменён. Старый owner login expired/unbound; следующий шаг — новый generated вход/owner confirmation, не повтор instrumentation. [Login/rollout](bot-login-recovery-2026-10-18.md), [probe](phone-public-smoke-2026-10-18.md).
 - UI-v2/12 палитр/3 стиля/7 эмоций/explicit numeric overgoal/week-month/statistics реализованы, main/test APK собраны. LOCAL использует Room schema2/DataStore/collector, не fixtures.
 - Android client PKCE/Keystore/sync/restore/friends и explicit discovery/sharing реализован; backend80 tests, Chrona104+spike8 unit tests, infra30, SQLite3 PASS. Lint0errors17warnings,13instrumentation только compiled. Runtime phone/Keystore/Room приёмка не проведена.
