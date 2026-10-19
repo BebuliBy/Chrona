@@ -10,12 +10,14 @@ import java.time.Instant
 import java.util.UUID
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 data class RemoteProfile(val accountId: String, val displayName: String, val telegramLinked: Boolean, val discoverable: Boolean = false) {
     override fun toString() = "RemoteProfile(redacted)"
 }
 data class AuthView(val origin: String = "", val loginPending: Boolean = false, val profile: RemoteProfile? = null,
-                    val requiresLogin: Boolean = true, val loginRevision: Long = 0)
+                    val requiresLogin: Boolean = true, val loginRevision: Long = 0, val generation: Long = 0)
 internal enum class BootstrapOutcome { NOT_SUPPLIED, APPLIED, PRESERVED, BLOCKED_EXISTING_BINDING }
 
 /** All token use/rotation/config changes serialized. Never sends a credential across origins. */
@@ -48,9 +50,12 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
             mutable.value.profile ?: connection.cachedProfile ?: RemoteProfile(value.session.accountId, "Профиль", true)
             else RemoteProfile(value.session.accountId, "Профиль", true)
         val record = PrivateConnection(value.origin, value.session, value.pending, cached)
+        val changedSession = record.origin != connection.origin || record.session?.sessionId != connection.session?.sessionId ||
+            record.session?.accountId != connection.session?.accountId
         vault.save(record); connection = record
         mutable.value = mutable.value.copy(origin = record.origin, loginPending = record.pending != null,
-            profile = cached, requiresLogin = record.session == null || (record.session?.rotating == true && !refreshInFlight))
+            profile = cached, requiresLogin = record.session == null || (record.session?.rotating == true && !refreshInFlight),
+            generation = mutable.value.generation + if (changedSession) 1 else 0)
     }
     suspend fun configure(raw: String): Boolean = mutex.withLock {
         val origin = ServerOrigin.parse(raw)
@@ -86,6 +91,7 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
         url
     }
     suspend fun refreshLogin() {
+        val revisionBefore = mutable.value.loginRevision
         mutex.withLock {
             val pending = connection.pending ?: return@withLock
             if (pending.exchanging || pending.expiresAt <= Instant.now()) {
@@ -119,21 +125,30 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
                 else -> throw ClientFailure("INVALID_RESPONSE")
             }
         }
-        // /me is authoritative; merely opening Telegram/status=pending is not login success.
-        if (hasSession()) me()
+        // A completed exchange is already a valid session. Profile hydration failure is not failed login.
+        // No pending request / ordinary Activity resume must not repeat /me and social GETs.
+        if (mutable.value.loginRevision != revisionBefore) {
+            try { me() }
+            catch (failure: ClientFailure) {
+                if (failure.code != "OFFLINE" && failure.httpStatus !in 500..599 && failure.httpStatus != 429) throw failure
+            }
+        }
     }
     suspend fun hasSession(): Boolean = mutex.withLock { connection.session != null }
     suspend fun refreshIsUncertain(): Boolean = mutex.withLock { connection.session?.rotating == true }
-    suspend fun me(): RemoteProfile {
-        val j = authorized("GET", "/v1/me")
-        val p = WireCodec.profile(j)
-        mutex.withLock {
+    suspend fun me(): RemoteProfile = mutex.withLock {
+        try {
+            // Request + cache persistence are one session operation. A concurrent rotation can no
+            // longer insert a normal rotating marker between the GET and this profile save.
+            val p = WireCodec.profile(authorizedLocked("GET", "/v1/me"))
             if (p.accountId != connection.session?.accountId) throw ClientFailure("ACCOUNT_BINDING_CONFLICT")
             bind(connection.origin, p.accountId)
             persist(PrivateConnection(connection.origin, connection.session, connection.pending, p))
-            mutable.value = mutable.value.copy(profile = p)
+            p
+        } catch (failure: ClientFailure) {
+            failure.sessionGeneration = mutable.value.generation
+            throw failure
         }
-        return p
     }
     suspend fun ownSharingRevision(friendId: String, origin: String, account: String): String? {
         val path = "/v1/friends/${WireCodec.uuid(friendId)}/sharing"
@@ -157,13 +172,18 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
     }
     suspend fun authorized(method: String, path: String, body: String? = null, key: String? = null,
                            expectedOrigin: String? = null, expectedAccount: String? = null): JSONObject = mutex.withLock {
+        try { authorizedLocked(method, path, body, key, expectedOrigin, expectedAccount) }
+        catch (failure: ClientFailure) { failure.sessionGeneration = mutable.value.generation; throw failure }
+    }
+    private suspend fun authorizedLocked(method: String, path: String, body: String? = null, key: String? = null,
+                           expectedOrigin: String? = null, expectedAccount: String? = null): JSONObject {
         var s = connection.session ?: throw ClientFailure("LOGIN_REQUIRED")
         if ((expectedOrigin != null && expectedOrigin != connection.origin) ||
             (expectedAccount != null && expectedAccount != s.accountId)) throw ClientFailure("ACCOUNT_BINDING_CONFLICT")
         if (s.rotating) throw ClientFailure("SESSION_REFRESH_UNCERTAIN")
         var refreshed = false
         if (s.expiresAt <= Instant.now().plusSeconds(5)) { s = rotate(s); refreshed = true }
-        try { send(connection.origin, method, path, body, s.access, key) }
+        return try { send(connection.origin, method, path, body, s.access, key) }
         catch (error: ClientFailure) {
             if (error.httpStatus != 401 || error.code != "UNAUTHENTICATED") throw error
             if (refreshed) { persist(PrivateConnection(connection.origin)); throw ClientFailure("LOGIN_REQUIRED", 401) }
@@ -175,7 +195,7 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
             }
         }
     }
-    private suspend fun rotate(old: ClientSession): ClientSession {
+    private suspend fun rotate(old: ClientSession): ClientSession = withContext(NonCancellable) {
         if (old.rotating) throw ClientFailure("SESSION_REFRESH_UNCERTAIN")
         persist(PrivateConnection(connection.origin, ClientSession(old.accountId, old.sessionId, old.access,
             old.refresh, old.expiresAt, true), connection.pending), refreshInFlight = true)
@@ -183,7 +203,7 @@ class SessionClient(private val transport: HttpTransport, private val vault: Ses
             val result = send(connection.origin, "POST", "/v1/auth/refresh", JSONObject().put("refreshToken", old.refresh).toString())
             val fresh = session(result)
             if (fresh.accountId != old.accountId || fresh.sessionId != old.sessionId) throw ClientFailure("ACCOUNT_BINDING_CONFLICT")
-            persist(PrivateConnection(connection.origin, fresh, connection.pending)); return fresh
+            persist(PrivateConnection(connection.origin, fresh, connection.pending)); return@withContext fresh
         } catch (cancelled: CancellationException) {
             mutable.value = mutable.value.copy(requiresLogin = true)
             throw cancelled // durable rotating marker retained

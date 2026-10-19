@@ -1,5 +1,16 @@
 # История изменений
 
+## 2026-10-19 — 0.4.2-session опубликована
+
+- Network observer больше не прерывает refresh и не объявляет offline из-за
+  Android VALIDATED probe; атомарный /me/cache persist, bounded noncancellable rotate.
+- Session generation/operation scopes отсекают поздние старые ошибки, friend/social
+  failures не блокируют raw sync; соответствующий успех убирает transient notice.
+- Ordinary notices5s, bounded guards от повторного старого сообщения; реальные
+  конфликты/неопределённый refresh не скрыты. Без schema/protocol/backend changes.
+- Один app assemble45s PASS, безtests/lint. Только APK8/manifest опубликованы,
+  старые6/7 сохранены, owner runtime/install8 ещё ожидается.
+
 ## 2026-10-19 — 0.4.1-goals опубликована
 
 - Shorts limit теперь effective-from/samezone до следующего изменения, а не

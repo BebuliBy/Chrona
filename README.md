@@ -4,6 +4,16 @@ Android/Kotlin-трекер привычек: автоматический Short
 
 ## Статус на 2026-10-18
 
+**Latest2026-10-19:0.4.2-session/code8 опубликована.** Исправлены source-пути
+ложного logout при network callback/гонке profile persist, запоздалых ошибок старой
+сессии и смешения friends/raw-sync ошибок. Успех убирает соответствующую transient
+ошибку, notices5s вместо3s, реальные conflicts/auth failures не скрыты. Один
+assembleDebug45s PASS, безtests/lint; штатная публикация immutable8/manifestLAST,
+API/DB/worker/publisher image не менялись. **Установка8 и результат на телефоне
+пока не подтверждены**, владелец открывает Chrona для in-app update. Настоящий
+lost-refresh-response всё ещё может требовать повторного входа; token reuse не
+разрешался. [Source](docs/session-notice-fix-2026-10-19.md), [публикация](docs/session-notice-release-2026-10-19.md).
+
 **Latest2026-10-19:0.4.1-goals/code7 опубликована для in-app update.** Лимит Shorts
 действует с выбранного дня ежедневно до следующего изменения; сегодняшний новый
 лимит не применяется к вчерашней клетке. Применимое правило согласовано между

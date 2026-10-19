@@ -15,6 +15,7 @@ import by.bebuliby.chrona.domain.ServerBaseUrl
 
 class ClientFailure(rawCode: String, val httpStatus: Int = 0,
                     val requestMayHaveBeenSent: Boolean? = null) : IOException("Chrona client request failed") {
+    internal var sessionGeneration: Long? = null
     val code = rawCode.takeIf { it in codes } ?: "SERVER_ERROR"
     companion object {
         private val codes = setOf("INVALID_ORIGIN", "UNSAFE_LOGIN_URL", "INVALID_RESPONSE", "UNSUPPORTED_VERSION",

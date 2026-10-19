@@ -46,6 +46,11 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
                         c.notice?.let { notice -> if (clientNoticeId != notice.id) {
                             clientNoticeId = notice.id; mutable.update { it.copy(notice = notice) }
                         } }
+                        if (c.notice == null && clientNoticeId != null) {
+                            val cleared = clientNoticeId
+                            mutable.update { if (it.notice?.id == cleared) it.copy(notice = null) else it }
+                            clientNoticeId = null
+                        }
                         render()
                     }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -74,7 +79,7 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
     override fun dispatch(action: ChronaAction) { commands.trySend(action) }
     fun refreshHostStatus() {
         render()
-        if (container.client.state.value.loginPending || container.client.state.value.profile != null)
+        if (container.client.state.value.loginPending)
             dispatch(ChronaAction.RefreshLoginStatus)
     }
     fun hostError(code: String, message: String) { fail(code, message) }
@@ -101,7 +106,7 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
             }
             is ChronaAction.Navigate -> {
                 mutable.update { it.copy(tab = action.tab) }
-                if (action.tab == MainTab.FRIENDS) clientAction { container.client.refreshFriends() }
+                if (action.tab == MainTab.FRIENDS) clientAction("friends") { container.client.refreshFriends() }
             }
             is ChronaAction.ConfigureServer -> ManagedServerConfiguration.rejectUserEdit()
             is ChronaAction.ConfigureDiscoverability -> clientAction { container.client.configureDiscoverability(action.enabled) }
@@ -164,22 +169,28 @@ class ChronaViewModel(private val container: ChronaContainer, application: Appli
             }
             ChronaAction.RefreshLoginStatus -> clientAction { container.client.refreshLogin() }
             ChronaAction.Logout -> clientAction { container.client.logout() }
-            ChronaAction.RequestSync -> clientAction { container.client.requestSync() }
+            ChronaAction.RequestSync -> clientAction("sync") { container.client.requestSync() }
             is ChronaAction.SetAutomaticSync -> clientAction { container.client.setAutomaticSync(action.enabled) }
-            is ChronaAction.SearchFriends -> clientAction { container.client.search(action.query) }
-            is ChronaAction.RequestFriend -> clientAction { container.client.requestFriend(action.accountId) }
-            is ChronaAction.RespondToFriendRequest -> clientAction { container.client.respond(action.requestId, action.accept) }
-            is ChronaAction.OpenFriend -> clientAction { container.client.openFriend(action.accountId, action.range, action.period) }
-            is ChronaAction.SaveSharing -> clientAction { container.client.sharing(action.grant) }
+            is ChronaAction.SearchFriends -> clientAction("friends") { container.client.search(action.query) }
+            is ChronaAction.RequestFriend -> clientAction("friends") { container.client.requestFriend(action.accountId) }
+            is ChronaAction.RespondToFriendRequest -> clientAction("friends") { container.client.respond(action.requestId, action.accept) }
+            is ChronaAction.OpenFriend -> clientAction("friends") { container.client.openFriend(action.accountId, action.range, action.period) }
+            is ChronaAction.SaveSharing -> clientAction("social") { container.client.sharing(action.grant) }
         }
         render()
     }
 
-    private fun clientAction(block: suspend () -> Unit) {
+    private fun clientAction(operation: String = "account", block: suspend () -> Unit) {
         viewModelScope.launch {
-            try { container.clientReady.await(); block() }
+            var generation = container.client.auth.state.value.generation
+            try {
+                container.clientReady.await()
+                generation = container.client.auth.state.value.generation
+                block()
+                if (operation == "account") container.client.operationSucceeded(operation, generation)
+            }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { container.client.notify(error) }
+            catch (error: Exception) { container.client.notify(error, operation, generation) }
         }
     }
 

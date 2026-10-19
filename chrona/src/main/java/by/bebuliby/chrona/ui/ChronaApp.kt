@@ -24,20 +24,47 @@ import androidx.compose.ui.unit.dp
 import by.bebuliby.chrona.domain.*
 import kotlinx.coroutines.delay
 
+private const val NOTICE_VISIBILITY_MILLIS = 5_000L
+
 /** Production entry point. All facts, permissions and derived business values come from core. */
 @Composable
 fun ChronaApp(state: ChronaUiState, dispatch: (ChronaAction) -> Unit) {
     val currentDispatch by rememberUpdatedState(dispatch)
     val notice = state.notice
+    // Bounded presentation guards only. Core must dismiss the originating client notice/generation.
+    var expiredNoticeId by rememberSaveable { mutableStateOf<String?>(null) }
+    var accountEntryNoticeId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.showAccountEntry, notice?.id) {
+        if (state.showAccountEntry) {
+            if (notice != null) accountEntryNoticeId = notice.id
+        } else {
+            val shownOnEntry = accountEntryNoticeId
+            accountEntryNoticeId = null
+            if (shownOnEntry != null && notice?.id == shownOnEntry) {
+                expiredNoticeId = shownOnEntry
+                currentDispatch(ChronaAction.DismissNotice(shownOnEntry))
+            }
+        }
+    }
     LaunchedEffect(notice?.id) {
         if (notice != null) {
-            delay(3_000)
+            if (notice.id == expiredNoticeId) {
+                currentDispatch(ChronaAction.DismissNotice(notice.id))
+                return@LaunchedEffect
+            }
+            delay(NOTICE_VISIBILITY_MILLIS)
+            expiredNoticeId = notice.id
             currentDispatch(ChronaAction.DismissNotice(notice.id))
         }
     }
+    val presentedNotice = notice?.takeUnless {
+        it.id == expiredNoticeId || (!state.showAccountEntry && it.id == accountEntryNoticeId) ||
+            (state.showAccountEntry && it.code == "LOGIN_REQUIRED")
+    }
+    val presentedState = if (presentedNotice === notice) state else state.copy(notice = presentedNotice)
     var updateCheckMessageVisible by remember(state.update.message) { mutableStateOf(!state.update.message.isNullOrBlank()) }
     LaunchedEffect(state.update.message) {
-        if (!state.update.message.isNullOrBlank()) { delay(3_000); updateCheckMessageVisible = false }
+        if (!state.update.message.isNullOrBlank()) { delay(NOTICE_VISIBILITY_MILLIS); updateCheckMessageVisible = false }
     }
     val updateCheckError = updateCheckMessageVisible && !state.update.required && !state.update.checking && !state.update.downloading
     val photoPolicy = LocalChronaRemotePhotoPolicy.current
@@ -47,8 +74,8 @@ fun ChronaApp(state: ChronaUiState, dispatch: (ChronaAction) -> Unit) {
         ChronaTheme(state.preferences) {
             when {
                 state.update.required -> MandatoryUpdateScreen(state.update, dispatch)
-                state.showAccountEntry -> AccountEntryScreen(state, dispatch, updateCheckError)
-                else -> ChronaContent(state, dispatch, updateCheckError)
+                state.showAccountEntry -> AccountEntryScreen(presentedState, dispatch, updateCheckError)
+                else -> ChronaContent(presentedState, dispatch, updateCheckError)
             }
         }
     }

@@ -35,8 +35,7 @@ class ChronaContainer(application: Application) {
     private val transport = HttpsTransport()
     val client = AndroidClient(SessionClient(transport, KeystoreSessionVault(application), syncStore::bind),
         syncStore, settings, scope, automaticScheduler::enqueue, automaticScheduler::cancelPending)
-    private val defaultNetwork = DefaultNetworkObserver(application,
-        { scope.launch { transport.defaultNetworkChanged() }; Unit }, client::defaultNetworkChanged)
+    private val defaultNetwork = DefaultNetworkObserver(application, client::defaultNetworkChanged)
     val clientReady = scope.async { ready.await(); client.initialize(BuildConfig.CHRONA_API_BASE_URL) }
     init {
         scope.launch {

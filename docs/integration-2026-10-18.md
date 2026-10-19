@@ -1,5 +1,11 @@
 # Chrona — интеграционный checkpoint 2026-10-18
 
+**Latest2026-10-19:**0.4.2-session/code8 compiled+published in-appupdate, noUSB.
+Session/network/generation/stalenotice fixes и5s notices, безtests/lint/server
+businesschanges. Source fixes не proof полного устранения logout на устройстве;
+настоящий lost-refresh остаётся отдельным recovery contract. Ownerinstall8pending.
+[Source](session-notice-fix-2026-10-19.md), [release](session-notice-release-2026-10-19.md).
+
 **Latest2026-10-19:** code7/0.4.1-goals built+published mandatory update;
 effective-from Shorts limit/clientWire/serverreadmodels, APIonly image c49af50a…,
 SQLsame/workerDBpublishergatewaypreserved. Root appassemble1m13s/backendinstallDist14s,
